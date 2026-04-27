@@ -1,0 +1,6 @@
+name: meme_assistant
+display_name: 表情包助手
+desc: AI 智能表情包插件 | LLM 按标签/工具发送表情 | 🧠 逐表情 Vision 识别生成描述 | WebUI 管理/搜索/编辑 | 云端同步 | 自动 Prompt 维护
+version: 1.1.0
+author: Slandre & Flandre
+repo: https://github.com/OMSociety/astrbot_plugin_meme_assistant
