@@ -6,6 +6,7 @@
 """
 
 import logging
+import threading
 from datetime import datetime, timezone
 
 from ..config import MEME_DESCRIPTIONS_PATH
@@ -35,6 +36,7 @@ class DescriptionManager:
 
     def __init__(self):
         self._data = self._load()
+        self._lock = threading.Lock()
 
     def _load(self) -> dict:
         """加载描述数据文件"""
@@ -46,8 +48,9 @@ class DescriptionManager:
         return data
 
     def _save(self) -> bool:
-        """持久化到文件"""
-        return save_json(self._data, MEME_DESCRIPTIONS_PATH)
+        """持久化到文件（线程安全）"""
+        with self._lock:
+            return save_json(self._data, MEME_DESCRIPTIONS_PATH)
 
     # ── 基础 CRUD ──────────────────────────────────────────
 

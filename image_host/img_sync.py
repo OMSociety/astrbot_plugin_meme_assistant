@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .core.sync_manager import SyncManager
 from .core.upload_tracker import UploadTracker
-from .providers import StarDotsProvider
+from .provider_registry import create_provider, discover_providers
 
 logger = logging.getLogger(__name__)
 
@@ -55,18 +55,11 @@ class ImageSync:
         self.local_dir = Path(local_dir)
         self.provider_type = provider_type
 
-        # 根据 provider_type 初始化对应的 provider
-        if provider_type == "stardots":
-            self.provider = StarDotsProvider(
-                {
-                    "key": config["key"],
-                    "secret": config["secret"],
-                    "space": config["space"],
-                    "local_dir": str(local_dir),
-                }
-            )
-        else:
+        # 使用 Provider 注册表创建实例
+        provider = create_provider(provider_type, config)
+        if provider is None:
             raise ValueError(f"不支持的图床提供者类型: {provider_type}")
+        self.provider = provider
 
         # 初始化上传追踪器（仅用于记录已上传文件）
         tracker_file = Path(local_dir) / ".upload_tracker.json"
@@ -249,15 +242,20 @@ def run_sync_process(config: dict[str, str], local_dir: str, task: str):
     try:
         logger.info(f"启动同步进程，任务类型: {task}, 本地目录: {local_dir}")
 
-        # 检测配置类型并提取正确的配置
+        # 检测配置类型并提取正确的配置 + provider_type
+        provider_type = "stardots"
         if "stardots" in config:
-            # 如果是 stardots 配置
             provider_config = config["stardots"]
             provider_type = "stardots"
         elif "key" in config:
-            # 如果是直接的 stardots 配置
             provider_config = config
             provider_type = "stardots"
+        elif any(k in config for k in ("cos", "oss", "s3", "alioss")):
+            for pt in ("cos", "oss", "s3", "alioss"):
+                if pt in config:
+                    provider_config = config[pt]
+                    provider_type = pt
+                    break
         else:
             logger.error(f"无法识别的配置格式: {list(config.keys())}")
             sys.exit(1)

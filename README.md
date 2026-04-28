@@ -4,7 +4,7 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-%E2%89%A5v4-green.svg)](https://github.com/AstrBotDevs/AstrBot)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
 
-为 LLM 提供智能表情包发送能力，支持 AI 识别发送、WebUI 管理、云端同步、逐表情 LLM 描述存。让 Bot 在群聊中精准、自然地使用表情包。
+为 LLM 提供智能表情包发送能力，支持 AI 识别发送、WebUI 管理、云端同步、逐表情 LLM 描述存储。让 Bot 在群聊中精准、自然地使用表情包。
 
 > 本项目由 AI 编写，v1.0.0 重构自 [astrbot_plugin_meme_manager](https://github.com/anka-afk/astrbot_plugin_meme_manager)。
 
@@ -83,6 +83,7 @@ pip install -r requirements.txt
 | 模糊搜索 | WebUI 支持按描述文本模糊搜索表情，精准定位 |
 | 批量识别 | 支持并发批量识别指定类别的未识别表情 |
 | 识别统计 | WebUI 展示各分类的识别覆盖率 |
+| ⚡ 识别熔断保护 | 连续识别失败自动暂停，冷却后自动恢复，防止 API 异常时刷屏报错 |
 
 ### WebUI 管理
 
@@ -127,6 +128,7 @@ pip install -r requirements.txt
 | 配置项 | 类型 | 默认值 | 说明 |
 |:----|:----|:----|:----|
 | `webui_port` | int | `5000` | WebUI 管理后台端口号 |
+| `webui_token` | string | `""` | WebUI 登录 Token（留空自动生成随机 Token） |
 | `convert_static_to_gif` | bool | `false` | 静态图转 GIF 发送（部分平台兼容） |
 | `content_cleanup_rule` | string | `&&[a-zA-Z]*&&` | 内容过滤正则，移除文本中的标签残留 |
 
@@ -176,9 +178,11 @@ pip install -r requirements.txt
 | 配置项 | 类型 | 默认值 | 说明 |
 |:----|:----|:----|:----|
 | `meme_identify_enabled` | bool | `true` | 启用逐表情 LLM 识别 |
-| `meme_identify_provider_id` | string | `kimi_2.5` | 识别用 Vision 模型的 Provider ID |
+| `meme_identify_provider_id` | string | `""` | 识别用 Vision 模型的 Provider ID（留空使用默认） |
 | `meme_identify_on_upload` | bool | `true` | 上传表情时自动触发识别 |
 | `meme_identify_concurrency` | int | `2` | 批量识别并发数 |
+| `meme_identify_circuit_threshold` | int | `5` | 连续识别失败 N 次后触发熔断，设为 0 禁用 |
+| `meme_identify_circuit_cooldown` | int | `300` | 熔断后冷却秒数，到期自动恢复识别 |
 
 ### Prompt 注入
 
@@ -255,19 +259,29 @@ Bot：已开启，地址：http://192.168.1.100:5000
 
 ```
 astrbot_plugin_meme_assistant/
-├── main.py                           # 主逻辑、LLM 工具注册、表情识别、表情处理
+├── main.py                           # 主逻辑、LLM 工具注册、插件入口
+├── _messaging_mixin.py               # 消息处理与表情替换
+├── _emotion_mixin.py                 # 独立情感模型判断
+├── _command_manage.py                # 表情管理指令（增删查改恢复）
+├── _command_upload.py                # 上传与图床同步指令
+├── _identify_mixin.py                # LLM 表情识别控制
+├── _meme_recommender.py              # 表情推荐引擎
+├── _prompt_renderer.py               # Prompt 注入渲染
+├── _webui_mixin.py                   # WebUI 生命周期管理
 ├── config.py                         # 配置常量与路径
 ├── init.py                           # 插件初始化（默认表情包导入）
-├── utils.py                          # 工具函数（文件操作、哈希、默认表情恢复）
-├── webui.py                          # Flask WebUI 服务入口
+├── utils.py                          # 工具函数（文件操作、I/O锁、默认表情恢复）
+├── webui.py                          # Quart WebUI 服务入口（含 GET /api/version 自动刷新端点）
 ├── backend/                          # 后端管理模块
 │   ├── __init__.py                   # 模块导出
 │   ├── api.py                        # WebUI REST API（类别/描述/识别 CRUD）
 │   ├── category_manager.py           # 类别级描述管理（memes_data.json）
 │   ├── description_manager.py        # 逐表情 LLM 描述管理（meme_descriptions.json）
-│   └── models.py                     # 数据模型与工具函数
+│   ├── models.py                     # 数据模型与工具函数
+│   └── provider_registry.py          # 图床 Provider 注册中心
 ├── image_host/                       # 图床同步模块
 │   ├── img_sync.py                   # 同步入口
+│   ├── provider_registry.py          # Provider 注册中心
 │   ├── core/                         # 核心同步逻辑
 │   │   ├── sync_manager.py
 │   │   ├── file_handler.py
@@ -276,8 +290,23 @@ astrbot_plugin_meme_assistant/
 │   │   └── image_host.py
 │   └── providers/                    # 图床服务商
 │       ├── stardots_provider.py
+│       ├── cos_provider.py
+│       ├── oss_provider.py
+│       ├── s3_provider.py
 │       └── provider_template.py
+├── providers/                        # 图床同步适配层
+│   ├── stardots_sync.py
+│   ├── cos_sync.py
+│   ├── oss_sync.py
+│   └── s3_sync.py
 ├── memes/                            # 默认表情包资源
+├── static/                           # WebUI 前端资源
+│   └── js/
+│       ├── script.js                 # 前端逻辑（含自动版本轮询）
+│       └── sw.js                     # Service Worker（离线缓存）
+├── templates/                        # WebUI 模板
+├── tests/                            # 单元测试
+│   └── test_core.py                  # 核心功能测试（15 个用例）
 ├── _conf_schema.json                 # 配置项 schema
 ├── metadata.yaml                     # 插件元信息
 ├── README.md                         # 本文档

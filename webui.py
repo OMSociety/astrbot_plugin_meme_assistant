@@ -1,6 +1,8 @@
 import asyncio
+import asyncio
 import os
 import secrets
+import time
 
 import hypercorn.asyncio
 from hypercorn.config import Config
@@ -18,6 +20,8 @@ from quart import (
 from .backend.api import api
 from .config import MEMES_DIR
 
+_SERVER_START_TIME = time.time()
+
 
 class ServerState:
     _instance = None
@@ -26,13 +30,30 @@ class ServerState:
         if not cls._instance:
             cls._instance = super().__new__(cls)
             cls._instance.ready = asyncio.Event()
-            cls._instance.port = 5000
         return cls._instance
+
+    @classmethod
+    def reset(cls):
+        """重置单例状态，供 restart 场景使用"""
+        cls._instance = None
 
 
 app = Quart(__name__)
 
 app.register_blueprint(api, url_prefix="/api")
+
+
+@app.route("/api/version", methods=["GET"])
+async def api_version():
+    """返回复合版本号，前端轮询此接口检测是否需要刷新"""
+    meme_mtime = 0
+    if os.path.exists(MEMES_DIR):
+        meme_mtime = os.path.getmtime(MEMES_DIR)
+    return jsonify({
+        "version": f"{_SERVER_START_TIME:.0f}_{meme_mtime:.0f}",
+        "server_start": _SERVER_START_TIME,
+    })
+
 
 WEBUI_TOKEN = None
 _current_server = None
@@ -73,6 +94,18 @@ async def login():
     return await render_template("login.html", error=error)
 
 
+@app.route("/sw.js")
+async def service_worker():
+    """P3-2: Service Worker 离线包 — 必须从根路径提供以控制全局作用域"""
+    from quart import make_response as q_make_response
+
+    resp = await q_make_response(await send_from_directory("static/js", "sw.js"))
+    resp.headers["Service-Worker-Allowed"] = "/"
+    resp.headers["Content-Type"] = "application/javascript"
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.route("/")
 async def index():
     token = request.cookies.get("meme_token")
@@ -97,10 +130,12 @@ def run_server(config):
 async def start_server(config=None):
     global WEBUI_TOKEN, _current_server
 
+    ServerState.reset()  # 重置旧单例状态
     state = ServerState()
     state.ready.clear()
 
     port = config.get("webui_port", 5000)
+    state.port = port
     WEBUI_TOKEN = config.get("webui_token", "").strip()
     if not WEBUI_TOKEN:
         WEBUI_TOKEN = secrets.token_hex(16)

@@ -60,7 +60,7 @@
         <div class="left-panel-header">
           <div>
             <p class="left-panel-eyebrow">控制台</p>
-            <h2>同步与目录</h2>
+            <h2>状态与目录</h2>
           </div>
           <button
             id="sidebar-close-btn"
@@ -71,75 +71,59 @@
             <i class="fas fa-xmark"></i>
           </button>
         </div>
-        <div class="sync-buttons">
-          <button id="check-sync-btn">
-            <i class="fas fa-sync icon"></i>检查同步状态
-          </button>
-        </div>
 
-        <!-- 同步控制面板 -->
-        <div class="sync-panel">
-          <h3><i class="fas fa-gear icon"></i>配置同步</h3>
-          <div id="sync-status">
-            <p>
-              <i class="fas fa-spinner fa-spin icon"></i>正在检查同步状态...
-            </p>
+        <!-- 状态概览（合并原配置同步+图床同步+LLM识别） -->
+        <div class="status-overview">
+          <div class="status-overview-header">
+            <h4><i class="fas fa-chart-pie icon"></i>状态概览</h4>
+            <button id="check-sync-btn" class="status-refresh-btn" title="刷新所有状态">
+              <i class="fas fa-sync"></i>刷新
+            </button>
           </div>
-        </div>
-
-        <hr class="sync-divider" />
-
-        <div class="sync-panel">
-          <h4><i class="fas fa-cloud icon"></i>图床同步</h4>
-          <div class="sync-status">
-            <div class="sync-provider-summary">
-              <p>
-                <i class="fas fa-server icon"></i>图床服务商:
-                <span id="img-host-provider">--</span>
-              </p>
-              <p>
-                <i class="fas fa-images icon"></i>云端图片数:
-                <span id="remote-image-count">--</span> 张
-              </p>
-              <p>
-                <i class="fas fa-hard-drive icon"></i>云端占用:
-                <span id="remote-storage-size">--</span>
-              </p>
+          <div class="status-grid">
+            <div class="status-row">
+              <span class="status-label"><i class="fas fa-server"></i>图床</span>
+              <span class="status-value" id="img-host-provider">--</span>
             </div>
-            <p>
-              <i class="fas fa-upload icon"></i>待上传:
-              <span id="upload-count">0</span> 个文件
-            </p>
-            <p>
-              <i class="fas fa-download icon"></i>待下载:
-              <span id="download-count">0</span> 个文件
-            </p>
-            <button id="upload-sync-btn">
-              <i class="fas fa-cloud-arrow-up icon"></i>同步到云端
-            </button>
-            <button id="download-sync-btn">
-              <i class="fas fa-cloud-arrow-down icon"></i>从云端同步
-            </button>
+            <div class="status-row">
+              <span class="status-label"><i class="fas fa-images"></i>云端</span>
+              <span class="status-value"><span id="remote-image-count">--</span> 张 · <span id="remote-storage-size">--</span></span>
+            </div>
+            <div class="status-row">
+              <span class="status-label"><i class="fas fa-upload"></i>待上传</span>
+              <span class="status-value" id="upload-count">0 个</span>
+            </div>
+            <div class="status-row">
+              <span class="status-label"><i class="fas fa-download"></i>待下载</span>
+              <span class="status-value" id="download-count">0 个</span>
+            </div>
+            <div class="status-row">
+              <span class="status-label"><i class="fas fa-chart-simple"></i>识别覆盖</span>
+              <span class="status-value" id="identify-coverage">--</span>
+            </div>
           </div>
+          <div id="sync-status" class="status-config-note"></div>
         </div>
 
         <hr class="sync-divider" />
 
-        <div class="sync-panel">
-          <h4><i class="fas fa-brain icon"></i>LLM 识别</h4>
-          <div class="sync-status">
-            <p>
-              <i class="fas fa-chart-simple icon"></i>描述覆盖:
-              <span id="identify-coverage">--</span>
-            </p>
-            <button id="identify-all-btn">
-              <i class="fas fa-magnifying-glass icon"></i>全量识别（未识别）
-            </button>
-            <button id="reidentify-all-btn" class="danger">
-              <i class="fas fa-rotate-right icon"></i>全量重识别（全部）
+        <!-- P3-5: 标签筛选侧边栏 -->
+        <div class="tag-sidebar" id="tag-sidebar">
+          <div class="tag-sidebar-header">
+            <h4><i class="fas fa-tags icon"></i>标签筛选</h4>
+            <button id="tag-sidebar-clear-btn" class="tag-clear-btn hidden" title="清除筛选">
+              <i class="fas fa-xmark"></i> 全部
             </button>
           </div>
+          <div class="tag-cloud" id="tag-cloud">
+            <p class="tag-loading"><i class="fas fa-spinner fa-spin"></i> 加载标签中...</p>
+          </div>
+          <div class="tag-filter-info hidden" id="tag-filter-info">
+            <span id="tag-filter-count">0</span> 个结果
+          </div>
         </div>
+
+        <hr class="sync-divider" />
 
         <!-- 目录导航 -->
         <div id="sidebar">
@@ -156,43 +140,83 @@
 	              <p id="selection-summary">未开启批量选择</p>
 	            </div>
 	            <div class="selection-toolbar-actions">
-	              <button id="batch-move-btn" class="secondary" disabled>
-	                <i class="fas fa-right-left icon"></i>移动已选
-	              </button>
 	              <button id="toggle-selection-mode-btn" class="secondary">
 	                <i class="fas fa-list-check icon"></i>开启批量选择
 	              </button>
-	              <button id="batch-delete-btn" class="danger" disabled>
+	              <button id="batch-move-btn" class="secondary hidden" disabled>
+	                <i class="fas fa-right-left icon"></i>移动已选
+	              </button>
+	              <button id="batch-delete-btn" class="danger hidden" disabled>
 	                <i class="fas fa-trash-can icon"></i>删除已选
+	              </button>
+	            </div>
+	          </div>
+	        </div>
+
+	        <div class="category-toolbar">
+	          <h2><i class="fas fa-folder-open icon"></i>表情包分类</h2>
+	          <div class="category-toolbar-actions">
+	            <button id="add-category-btn">
+	              <i class="fas fa-plus-circle icon"></i>添加分类
+	            </button>
+	          </div>
+	        </div>
+	        <div id="add-category-form" style="display: none">
+	          <input
+	            type="text"
+	            id="new-category-name"
+	            placeholder="输入类别名称"
+	            class="form-control"
+	          />
+	          <input
+	            type="text"
+	            id="new-category-description"
+	            placeholder="输入类别描述"
+	            class="form-control mt-2"
+	          />
+	          <button id="save-category-btn" class="btn btn-primary mt-2">
+	            <i class="fas fa-save icon"></i>保存分类
+	          </button>
+	        </div>
+
+	        <div id="emoji-categories"></div>
+
+	        <!-- 高级操作区域 -->
+	        <div class="advanced-actions">
+	          <details class="section-collapse" id="sync-actions-section">
+	            <summary>
+	              <i class="fas fa-cloud icon"></i>同步操作
+	              <span class="collapse-chevron">▸</span>
+	            </summary>
+	            <div class="collapse-body">
+	              <button id="upload-sync-btn">
+	                <i class="fas fa-cloud-arrow-up icon"></i>同步到云端
+	              </button>
+	              <button id="download-sync-btn">
+	                <i class="fas fa-cloud-arrow-down icon"></i>从云端同步
+	              </button>
+	            </div>
+	          </details>
+
+	          <details class="section-collapse danger-collapse" id="danger-actions-section">
+	            <summary>
+	              <i class="fas fa-triangle-exclamation icon"></i>危险操作
+	              <span class="collapse-chevron">▸</span>
+	            </summary>
+	            <div class="collapse-body">
+	              <button id="identify-all-btn">
+	                <i class="fas fa-magnifying-glass icon"></i>全量识别（未识别）
+	              </button>
+	              <button id="reidentify-all-btn" class="danger">
+	                <i class="fas fa-rotate-right icon"></i>全量重识别（全部）
 	              </button>
 	              <button id="clear-all-btn" class="danger">
 	                <i class="fas fa-radiation icon"></i>清空全部表情包
 	              </button>
 	            </div>
-	          </div>
+	          </details>
 	        </div>
-	        <div id="emoji-categories"></div>
-	        <button id="add-category-btn">
-	          <i class="fas fa-plus-circle icon"></i>添加分类
-	        </button>
-        <div id="add-category-form" style="display: none">
-          <input
-            type="text"
-            id="new-category-name"
-            placeholder="输入类别名称"
-            class="form-control"
-          />
-          <input
-            type="text"
-            id="new-category-description"
-            placeholder="输入类别描述"
-            class="form-control mt-2"
-          />
-          <button id="save-category-btn" class="btn btn-primary mt-2">
-            <i class="fas fa-save icon"></i>保存分类
-          </button>
-        </div>
-      </div>
+	      </div>
 	    </div>
 
 		    <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>
@@ -293,6 +317,20 @@
         <span id="drag-hud-label">3s</span>
       </div>
       <div id="drag-hud-caption" class="drag-hud-caption">长按 3 秒进入拖拽</div>
+    </div>
+
+    <!-- P3-3: 画廊 Lightbox -->
+    <div id="lightbox" class="lightbox-overlay">
+      <button class="lightbox-close" id="lightbox-close">&times;</button>
+      <div class="lightbox-content">
+        <button class="lightbox-btn lightbox-prev" id="lightbox-prev">&lsaquo;</button>
+        <img id="lightbox-img" src="" alt="">
+        <button class="lightbox-btn lightbox-next" id="lightbox-next">&rsaquo;</button>
+        <div class="lightbox-caption">
+          <span class="lightbox-caption-name" id="lightbox-filename"></span>
+          <span id="lightbox-index"></span>
+        </div>
+      </div>
     </div>
 
 	    <script src="{{ url_for('static', filename='js/script.js') }}"></script>

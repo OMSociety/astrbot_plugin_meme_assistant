@@ -5,6 +5,7 @@ from .config import (
     BASE_DATA_DIR,
     DEFAULT_CATEGORY_DESCRIPTIONS,
     MEMES_DATA_PATH,
+    _ensure_dirs,
 )
 from .utils import copy_default_memes_if_needed, ensure_dir_exists, save_json
 
@@ -14,6 +15,9 @@ logger = logging.getLogger(__name__)
 def init_plugin():
     """初始化插件，创建必要的目录和配置文件"""
     try:
+        # 创建必要的目录（惰性，避免 import 时副作用）
+        _ensure_dirs()
+
         # 创建基础数据目录
         ensure_dir_exists(BASE_DATA_DIR)
 

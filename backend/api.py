@@ -1,5 +1,6 @@
 import logging
 import os
+from functools import wraps
 
 from quart import Blueprint, current_app, jsonify, request
 
@@ -23,6 +24,26 @@ api = Blueprint("api", __name__)
 logger = logging.getLogger(__name__)
 
 
+
+def _get_plugin_service(name: str):
+    """从 app config 获取插件服务实例"""
+    plugin_config = current_app.config.get("PLUGIN_CONFIG", {})
+    return plugin_config.get(name)
+
+
+def api_handler(f):
+    """统一异常→JSON 转换装饰器，减少路由样板代码。"""
+    @wraps(f)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await f(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"API 异常 [{f.__name__}]: {e}", exc_info=True)
+            return jsonify({"message": str(e)}), 500
+
+    return wrapper
+
+
 def _get_provider_label(img_sync) -> str:
     """返回当前图床 provider 的展示名称。"""
     provider_type = getattr(img_sync, "provider_type", "")
@@ -35,6 +56,7 @@ def _get_provider_label(img_sync) -> str:
     return "未知图床"
 
 
+@api_handler
 @api.route("/emoji", methods=["GET"])
 async def get_all_emojis():
     """获取所有表情包（按类别分组）"""
@@ -45,6 +67,7 @@ async def get_all_emojis():
     return jsonify(emoji_data)
 
 
+@api_handler
 @api.route("/emoji/<category>", methods=["GET"])
 async def get_emojis_by_category(category):
     """获取指定类别的表情包"""
@@ -54,71 +77,67 @@ async def get_emojis_by_category(category):
     return jsonify(emojis if isinstance(emojis, list) else []), 200
 
 
+@api_handler
 @api.route("/emoji/add", methods=["POST"])
 async def add_emoji():
     """添加表情包到指定类别"""
+    # 检查是否有文件 - 使用 await 获取请求文件
+    files = await request.files
+    if not files or "image_file" not in files:
+        return jsonify({"message": "没有找到上传的图片文件"}), 400
+
+    image_file = files["image_file"]
+
+    # 使用 await 获取表单数据
+    form = await request.form
+    category = form.get("category")
+
+    if not category:
+        return jsonify({"message": "没有指定类别"}), 400
+
+    if not image_file or not image_file.filename:
+        return jsonify({"message": "无效的图片文件"}), 400
+
+    # 记录上传信息
+    logger.info(f"收到上传请求: 类别={category}, 文件名={image_file.filename}")
+
     try:
-        # 检查是否有文件 - 使用 await 获取请求文件
-        files = await request.files
-        if not files or "image_file" not in files:
-            return jsonify({"message": "没有找到上传的图片文件"}), 400
+        result = add_emoji_to_category(category, image_file)
 
-        image_file = files["image_file"]
+        # 添加成功后同步配置
+        category_manager = _get_plugin_service("category_manager")
+        if category_manager:
+            category_manager.sync_with_filesystem()
 
-        # 使用 await 获取表单数据
-        form = await request.form
-        category = form.get("category")
+        logger.info(f"表情包添加成功: {result['path']}")
+        return jsonify(
+            {
+                "message": "表情包添加成功",
+                "path": result["path"],
+                "category": category,
+                "filename": result["filename"],
+            }
+        ), 201
 
-        if not category:
-            return jsonify({"message": "没有指定类别"}), 400
-
-        if not image_file or not image_file.filename:
-            return jsonify({"message": "无效的图片文件"}), 400
-
-        # 记录上传信息
-        logger.info(f"收到上传请求: 类别={category}, 文件名={image_file.filename}")
-
-        try:
-            result = add_emoji_to_category(category, image_file)
-
-            # 添加成功后同步配置
-            plugin_config = current_app.config.get("PLUGIN_CONFIG", {})
-            category_manager = plugin_config.get("category_manager")
-            if category_manager:
-                category_manager.sync_with_filesystem()
-
-            logger.info(f"表情包添加成功: {result['path']}")
-            return jsonify(
+    except DuplicateEmojiError as inner_e:
+        logger.info(f"跳过重复表情包: {inner_e}")
+        return (
+            jsonify(
                 {
-                    "message": "表情包添加成功",
-                    "path": result["path"],
+                    "message": str(inner_e),
+                    "code": "duplicate_emoji",
                     "category": category,
-                    "filename": result["filename"],
+                    "filename": inner_e.existing_filename,
                 }
-            ), 201
-
-        except DuplicateEmojiError as inner_e:
-            logger.info(f"跳过重复表情包: {inner_e}")
-            return (
-                jsonify(
-                    {
-                        "message": str(inner_e),
-                        "code": "duplicate_emoji",
-                        "category": category,
-                        "filename": inner_e.existing_filename,
-                    }
-                ),
-                409,
-            )
-        except Exception as inner_e:
-            logger.error(f"处理上传文件时出错: {inner_e}", exc_info=True)
-            return jsonify({"message": f"处理上传文件时出错: {str(inner_e)}"}), 500
-
-    except Exception as e:
-        logger.error(f"处理上传请求时发生未知异常: {e}", exc_info=True)
-        return jsonify({"message": f"处理上传请求时发生未知异常: {str(e)}"}), 500
+            ),
+            409,
+        )
+    except Exception as inner_e:
+        logger.error(f"处理上传文件时出错: {inner_e}", exc_info=True)
+        return jsonify({"message": f"处理上传文件时出错: {str(inner_e)}"}), 500
 
 
+@api_handler
 @api.route("/emoji/delete", methods=["POST"])
 async def delete_emoji():
     """删除指定类别的表情包"""
@@ -140,6 +159,7 @@ async def delete_emoji():
         return jsonify({"message": "Emoji not found"}), 404
 
 
+@api_handler
 @api.route("/emoji/batch_delete", methods=["POST"])
 async def batch_delete_emoji():
     """批量删除指定类别的表情包"""
@@ -168,6 +188,7 @@ async def batch_delete_emoji():
     ), 200
 
 
+@api_handler
 @api.route("/emoji/move", methods=["POST"])
 async def move_emoji():
     """移动单个表情包到指定类别。"""
@@ -207,6 +228,7 @@ async def move_emoji():
     ), 200
 
 
+@api_handler
 @api.route("/emoji/batch_move", methods=["POST"])
 async def batch_move_emoji():
     """批量移动指定类别的表情包到另一个类别。"""
@@ -300,6 +322,7 @@ async def batch_copy_emoji():
     ), 200
 
 
+@api_handler
 @api.route("/category/clear", methods=["POST"])
 async def clear_category():
     """清空指定类别下的所有表情包，但保留类别和配置。"""
@@ -323,6 +346,7 @@ async def clear_category():
     ), 200
 
 
+@api_handler
 @api.route("/emoji/clear_all", methods=["POST"])
 async def clear_all_emoji():
     """清空所有类别中的表情包，但保留类别和配置。"""
@@ -339,225 +363,180 @@ async def clear_all_emoji():
     ), 200
 
 
+@api_handler
 @api.route("/emotions", methods=["GET"])
 async def get_emotions():
     """获取表情包类别描述"""
-    try:
-        plugin_config = current_app.config.get("PLUGIN_CONFIG", {})
-        category_manager = plugin_config.get("category_manager")
-        descriptions = category_manager.get_descriptions()
-        return jsonify(descriptions)
-    except Exception as e:
-        current_app.logger.error(f"获取标签描述失败: {e}")
-        return jsonify({"error": "获取标签描述失败"}), 500
+    category_manager = _get_plugin_service("category_manager")
+    descriptions = category_manager.get_descriptions()
+    return jsonify(descriptions)
 
 
+@api_handler
 @api.route("/category/delete", methods=["POST"])
 async def delete_category():
-    """删除表情包类别"""
-    try:
-        data = await request.get_json()
+    data = await request.get_json()
 
-        category = data.get("category")
-        if not category:
-            return jsonify({"message": "Category is required"}), 400
+    category = data.get("category")
+    if not category:
+        return jsonify({"message": "Category is required"}), 400
 
-        plugin_config = current_app.config.get("PLUGIN_CONFIG", {})
-        category_manager = plugin_config.get("category_manager")
+    category_manager = _get_plugin_service("category_manager")
 
-        if not category_manager:
-            return jsonify({"message": "Category manager not found"}), 404
+    if not category_manager:
+        return jsonify({"message": "Category manager not found"}), 404
 
-        if category_manager.delete_category(category):
-            return jsonify({"message": "Category deleted successfully"}), 200
-        else:
-            return jsonify({"message": "Failed to delete category"}), 500
-    except Exception as e:
-        return jsonify({"message": f"Failed to delete category: {str(e)}"}), 500
+    if category_manager.delete_category(category):
+        return jsonify({"message": "Category deleted successfully"}), 200
+    else:
+        return jsonify({"message": "Failed to delete category"}), 500
 
 
+@api_handler
 @api.route("/sync/status", methods=["GET"])
 async def get_sync_status():
-    """获取同步状态"""
-    try:
-        plugin_config = current_app.config.get("PLUGIN_CONFIG", {})
-        category_manager = plugin_config.get("category_manager")
+    category_manager = _get_plugin_service("category_manager")
 
-        if not category_manager:
-            raise ValueError("未找到类别管理器")
+    if not category_manager:
+        raise ValueError("未找到类别管理器")
 
-        logger.info("获取同步状态...")
-        missing_in_config, deleted_categories = category_manager.get_sync_status()
+    logger.info("获取同步状态...")
+    missing_in_config, deleted_categories = category_manager.get_sync_status()
 
-        return jsonify(
-            {
-                "status": "ok",
+    return jsonify(
+        {
+            "status": "ok",
+            "missing_in_config": missing_in_config,
+            "deleted_categories": deleted_categories,
+            "differences": {
                 "missing_in_config": missing_in_config,
                 "deleted_categories": deleted_categories,
-                "differences": {
-                    "missing_in_config": missing_in_config,
-                    "deleted_categories": deleted_categories,
-                },
-            }
-        )
-    except Exception as e:
-        logger.error(f"获取同步状态失败: {e}")
-        return jsonify({"error": "获取同步状态失败"}), 500
+            },
+        }
+    )
 
 
+@api_handler
 @api.route("/sync/config", methods=["POST"])
 async def sync_config():
-    """同步配置与文件夹结构的 API 端点"""
-    try:
-        plugin_config = current_app.config.get("PLUGIN_CONFIG", {})
-        category_manager = plugin_config.get("category_manager")
+    category_manager = _get_plugin_service("category_manager")
 
-        if not category_manager:
-            raise ValueError("未找到类别管理器")
+    if not category_manager:
+        raise ValueError("未找到类别管理器")
 
-        logger.info("开始同步配置...")
-        if category_manager.sync_with_filesystem():
-            logger.info("配置同步成功")
-            return jsonify({"message": "配置同步成功"}), 200
-        else:
-            logger.warning("配置同步失败")
-            return jsonify({"message": "配置同步失败"}), 500
-    except Exception as e:
-        logger.error(f"配置同步失败: {e}")
-        return jsonify({"message": f"配置同步失败: {str(e)}"}), 500
+    logger.info("开始同步配置...")
+    if category_manager.sync_with_filesystem():
+        logger.info("配置同步成功")
+        return jsonify({"message": "配置同步成功"}), 200
+    else:
+        logger.warning("配置同步失败")
+        return jsonify({"message": "配置同步失败"}), 500
 
 
+@api_handler
 @api.route("/category/update_description", methods=["POST"])
 async def update_category_description():
-    """更新类别的描述"""
-    try:
-        data = await request.get_json()
-        category = data.get("tag")
-        description = data.get("description")
-        if not category or not description:
-            return jsonify({"message": "Category and description are required"}), 400
+    data = await request.get_json()
+    category = data.get("tag")
+    description = data.get("description")
+    if not category or not description:
+        return jsonify({"message": "Category and description are required"}), 400
 
-        plugin_config = current_app.config.get("PLUGIN_CONFIG", {})
-        category_manager = plugin_config.get("category_manager")
+    category_manager = _get_plugin_service("category_manager")
 
-        if not category_manager:
-            return jsonify({"message": "Category manager not found"}), 404
+    if not category_manager:
+        return jsonify({"message": "Category manager not found"}), 404
 
-        if category_manager.update_description(category, description):
-            # 返回更新后的类别和描述
-            return jsonify({"category": category, "description": description}), 200
-        else:
-            return jsonify({"message": "Failed to update category description"}), 500
-    except Exception as e:
-        return jsonify(
-            {"message": f"Failed to update category description: {str(e)}"}
-        ), 500
+    if category_manager.update_description(category, description):
+        # 返回更新后的类别和描述
+        return jsonify({"category": category, "description": description}), 200
+    else:
+        return jsonify({"message": "Failed to update category description"}), 500
 
 
+@api_handler
 @api.route("/category/restore", methods=["POST"])
 async def restore_category():
-    """恢复或创建新类别"""
-    try:
-        data = await request.get_json()
+    data = await request.get_json()
 
-        category = data.get("category")
-        description = data.get("description", "请添加描述")
+    category = data.get("category")
+    description = data.get("description", "请添加描述")
 
-        if not category:
-            return jsonify({"message": "Category is required"}), 400
+    if not category:
+        return jsonify({"message": "Category is required"}), 400
 
-        plugin_config = current_app.config.get("PLUGIN_CONFIG", {})
-        category_manager = plugin_config.get("category_manager")
+    category_manager = _get_plugin_service("category_manager")
 
-        if not category_manager:
-            return jsonify({"message": "Category manager not found"}), 404
+    if not category_manager:
+        return jsonify({"message": "Category manager not found"}), 404
 
-        # 创建类别目录
-        category_path = os.path.join(MEMES_DIR, category)
-        os.makedirs(category_path, exist_ok=True)
+    # 创建类别目录
+    category_path = os.path.join(MEMES_DIR, category)
+    os.makedirs(category_path, exist_ok=True)
 
-        # 更新类别描述
-        if category_manager.update_description(category, description):
-            return jsonify(
-                {"message": "Category created successfully", "description": description}
-            ), 200
-        else:
-            return jsonify({"message": "Failed to create category"}), 500
-
-    except Exception as e:
-        return jsonify({"message": f"Failed to create category: {str(e)}"}), 500
+    # 更新类别描述
+    if category_manager.update_description(category, description):
+        return jsonify(
+            {"message": "Category created successfully", "description": description}
+        ), 200
+    else:
+        return jsonify({"message": "Failed to create category"}), 500
 
 
+@api_handler
 @api.route("/category/rename", methods=["POST"])
 async def rename_category():
-    """重命名类别"""
-    try:
-        data = await request.get_json()
-        old_name = data.get("old_name")
-        new_name = data.get("new_name")
-        if not old_name or not new_name:
-            return jsonify({"message": "Old and new category names are required"}), 400
+    data = await request.get_json()
+    old_name = data.get("old_name")
+    new_name = data.get("new_name")
+    if not old_name or not new_name:
+        return jsonify({"message": "Old and new category names are required"}), 400
 
-        plugin_config = current_app.config.get("PLUGIN_CONFIG", {})
-        category_manager = plugin_config.get("category_manager")
+    category_manager = _get_plugin_service("category_manager")
 
-        if not category_manager:
-            return jsonify({"message": "Category manager not found"}), 404
+    if not category_manager:
+        return jsonify({"message": "Category manager not found"}), 404
 
-        if category_manager.rename_category(old_name, new_name):
-            return jsonify({"message": "Category renamed successfully"}), 200
-        else:
-            return jsonify({"message": "Failed to rename category"}), 500
-    except Exception as e:
-        return jsonify({"message": f"Failed to rename category: {str(e)}"}), 500
+    if category_manager.rename_category(old_name, new_name):
+        return jsonify({"message": "Category renamed successfully"}), 200
+    else:
+        return jsonify({"message": "Failed to rename category"}), 500
 
 
+@api_handler
 @api.route("/img_host/sync/status", methods=["GET"])
 async def get_img_host_sync_status():
-    """获取同步状态"""
-    try:
-        plugin_config = current_app.config.get("PLUGIN_CONFIG", {})
-        img_sync = plugin_config.get("img_sync")
-        if not img_sync:
-            return jsonify({"error": "图床服务未配置"}), 400
+    img_sync = _get_plugin_service("img_sync")
+    if not img_sync:
+        return jsonify({"error": "图床服务未配置"}), 400
 
-        status = img_sync.check_status()
-        status["upload_count"] = len(status.get("to_upload", []))
-        status["download_count"] = len(status.get("to_download", []))
-        status["provider_label"] = _get_provider_label(img_sync)
-        return jsonify(status)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    status = img_sync.check_status()
+    status["upload_count"] = len(status.get("to_upload", []))
+    status["download_count"] = len(status.get("to_download", []))
+    status["provider_label"] = _get_provider_label(img_sync)
+    return jsonify(status)
 
 
+@api_handler
 @api.route("/img_host/sync/upload", methods=["POST"])
 async def sync_to_remote():
-    """同步到云端"""
-    try:
-        plugin_config = current_app.config.get("PLUGIN_CONFIG", {})
-        img_sync = plugin_config.get("img_sync")
-        if not img_sync:
-            return jsonify({"message": "图床服务未配置"}), 400
+    img_sync = _get_plugin_service("img_sync")
+    if not img_sync:
+        return jsonify({"message": "图床服务未配置"}), 400
 
-        img_sync.sync_process = img_sync._start_sync_process("upload")
-        return jsonify({"success": True})
-    except Exception as e:
-        return jsonify({"message": str(e)}), 500
+    img_sync.sync_process = img_sync._start_sync_process("upload")
+    return jsonify({"success": True})
 
 
+@api_handler
 @api.route("/img_host/sync/download", methods=["POST"])
 async def sync_from_remote():
-    """从云端同步"""
-    try:
-        plugin_config = current_app.config.get("PLUGIN_CONFIG", {})
-        img_sync = plugin_config.get("img_sync")
-        if not img_sync:
-            return jsonify({"message": "图床服务未配置"}), 400
+    img_sync = _get_plugin_service("img_sync")
+    if not img_sync:
+        return jsonify({"message": "图床服务未配置"}), 400
 
-        img_sync.sync_process = img_sync._start_sync_process("download")
-        return jsonify({"success": True})
-    except Exception as e:
-        return jsonify({"message": str(e)}), 500
+    img_sync.sync_process = img_sync._start_sync_process("download")
+    return jsonify({"success": True})
 
 
 # ── 表情包描述管理 API ──────────────────────────────────────────
@@ -565,10 +544,10 @@ async def sync_from_remote():
 
 def _get_description_manager():
     """从 app config 获取 description_manager"""
-    plugin_config = current_app.config.get("PLUGIN_CONFIG", {})
-    return plugin_config.get("description_manager")
+    return _get_plugin_service("description_manager")
 
 
+@api_handler
 @api.route("/description/<category>/<filename>", methods=["GET"])
 async def get_meme_description(category, filename):
     """获取单张表情包的描述"""
@@ -582,6 +561,7 @@ async def get_meme_description(category, filename):
     return jsonify({"category": category, "filename": filename, **data})
 
 
+@api_handler
 @api.route("/description/stats", methods=["GET"])
 async def get_description_stats():
     """获取表情包描述覆盖统计"""
@@ -591,6 +571,26 @@ async def get_description_stats():
     return jsonify(dm.get_stats())
 
 
+@api_handler
+@api.route("/description/category/<category>", methods=["GET"])
+async def get_category_descriptions(category):
+    """获取指定分类下所有表情包的描述"""
+    dm = _get_description_manager()
+    if not dm:
+        return jsonify({"message": "Description manager not available"}), 503
+    entries = dm.get_category_entries(f"{category}/")
+    # 文件名作为 key，只返回描述和标签
+    result = {}
+    for key, entry in entries.items():
+        filename = key.split("/", 1)[1] if "/" in key else key
+        result[filename] = {
+            "description": entry.get("description", ""),
+            "tags": entry.get("tags", []),
+        }
+    return jsonify(result)
+
+
+@api_handler
 @api.route("/description/<category>/<filename>", methods=["PUT"])
 async def update_meme_description(category, filename):
     """更新单张表情包的描述/标签（WebUI 编辑用）"""
@@ -610,6 +610,7 @@ async def update_meme_description(category, filename):
     return jsonify({"message": "Description updated"})
 
 
+@api_handler
 @api.route("/description/<category>/<filename>", methods=["DELETE"])
 async def delete_meme_description(category, filename):
     """删除单张表情包的描述"""
@@ -622,6 +623,39 @@ async def delete_meme_description(category, filename):
     return jsonify({"message": "Description not found"}), 404
 
 
+@api_handler
+@api.route("/description/tags", methods=["GET"])
+async def get_all_tags():
+    """获取全局标签列表（含计数+文件映射），用于标签侧边栏筛选"""
+    dm = _get_description_manager()
+    if not dm:
+        return jsonify({"message": "Description manager not available"}), 503
+
+    tag_counter = {}
+    # file_map: { "category/filename": ["tag1","tag2"] }
+    file_map = {}
+
+    for key, entry in dm._data.get("entries", {}).items():
+        tags = entry.get("tags", [])
+        if not isinstance(tags, list):
+            continue
+        clean_tags = [t.strip() for t in tags if t.strip()]
+        if clean_tags:
+            file_map[key] = clean_tags
+        for tag in clean_tags:
+            tag_counter[tag] = tag_counter.get(tag, 0) + 1
+
+    sorted_tags = sorted(tag_counter.items(), key=lambda x: x[1], reverse=True)
+    return jsonify(
+        {
+            "tags": [{"name": name, "count": count} for name, count in sorted_tags],
+            "total": len(sorted_tags),
+            "file_map": file_map,
+        }
+    )
+
+
+@api_handler
 @api.route("/description/search", methods=["GET"])
 async def search_meme_descriptions():
     """模糊搜索表情包描述"""
@@ -641,25 +675,27 @@ async def search_meme_descriptions():
 
 
 def _write_identify_queue(tasks: list[dict]) -> bool:
-    """向识别队列追加任务（跨进程通信）"""
+    """向识别队列追加任务（跨进程通信，fcntl 排他锁保护）"""
     import json as _json
 
-    try:
+    queue_path = str(MEME_IDENTIFY_QUEUE_PATH)
+    from ..utils import flock_exclusive
+
+    with flock_exclusive(queue_path):
         existing = []
-        if MEME_IDENTIFY_QUEUE_PATH.exists():
-            existing = _json.loads(
-                MEME_IDENTIFY_QUEUE_PATH.read_text(encoding="utf-8") or "[]"
-            )
+        p = MEME_IDENTIFY_QUEUE_PATH
+        if p.exists():
+            raw = p.read_text(encoding="utf-8") or "[]"
+            existing = _json.loads(raw)
         existing.extend(tasks)
-        MEME_IDENTIFY_QUEUE_PATH.write_text(
-            _json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8"
+        p.write_text(
+            _json.dumps(existing, ensure_ascii=False, indent=2),
+            encoding="utf-8",
         )
-        return True
-    except Exception as e:
-        logger.error(f"写入识别队列失败: {e}")
-        return False
+    return True
 
 
+@api_handler
 @api.route("/description/identify", methods=["POST"])
 async def trigger_identify():
     """触发 LLM 识别：将指定类别中未识别的文件写入队列"""
@@ -710,6 +746,7 @@ async def trigger_identify():
     ), 202 if success else 500
 
 
+@api_handler
 @api.route("/description/identify_all", methods=["POST"])
 async def trigger_identify_all():
     """触发全量 LLM 识别：所有类别中未识别的文件写入队列"""
@@ -744,6 +781,7 @@ async def trigger_identify_all():
     ), 202 if success else 500
 
 
+@api_handler
 @api.route("/description/reidentify_all", methods=["POST"])
 async def trigger_reidentify_all():
     """触发全量重新识别：清除所有描述并重新识别"""
@@ -777,20 +815,16 @@ async def trigger_reidentify_all():
     ), 202 if success else 500
 
 
+@api_handler
 @api.route("/img_host/sync/check_process", methods=["GET"])
 async def check_sync_process():
-    """检查同步进程状态"""
-    try:
-        plugin_config = current_app.config.get("PLUGIN_CONFIG", {})
-        img_sync = plugin_config.get("img_sync")
-        if not img_sync or not img_sync.sync_process:
-            return jsonify({"completed": True, "success": True})
+    img_sync = _get_plugin_service("img_sync")
+    if not img_sync or not img_sync.sync_process:
+        return jsonify({"completed": True, "success": True})
 
-        if not img_sync.sync_process.is_alive():
-            success = img_sync.sync_process.exitcode == 0
-            img_sync.sync_process = None
-            return jsonify({"completed": True, "success": success})
+    if not img_sync.sync_process.is_alive():
+        success = img_sync.sync_process.exitcode == 0
+        img_sync.sync_process = None
+        return jsonify({"completed": True, "success": success})
 
-        return jsonify({"completed": False})
-    except Exception as e:
-        return jsonify({"message": str(e)}), 500
+    return jsonify({"completed": False})

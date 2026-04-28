@@ -5,6 +5,7 @@ import json
 import logging
 import random
 import string
+import threading
 import time
 from pathlib import Path
 from typing import TypedDict
@@ -12,6 +13,7 @@ from typing import TypedDict
 import httpx
 
 from ..interfaces.image_host import ImageHostInterface
+from ...utils import compress_image_if_large
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +96,7 @@ class StarDotsProvider(ImageHostInterface):
             else Path("category_records.json")
         )
         self._load_records()  # 加载分类记录
+        self._record_lock = threading.Lock()  # 并发保护分类记录读写
 
     def _sync_server_time(self) -> None:
         """同步服务器时间。"""
@@ -126,19 +129,21 @@ class StarDotsProvider(ImageHostInterface):
     def _load_records(self):
         """从文件加载分类记录。"""
         try:
-            if self.records_file.exists():
-                with open(self.records_file, encoding="utf-8") as f:
-                    self._upload_records = json.load(f)
-            else:
-                self._upload_records = {}
+            with self._record_lock:
+                if self.records_file.exists():
+                    with open(self.records_file, encoding="utf-8") as f:
+                        self._upload_records = json.load(f)
+                else:
+                    self._upload_records = {}
         except Exception:
             self._upload_records = {}
 
     def _save_records(self):
         """保存分类记录到文件。"""
         try:
-            with open(self.records_file, "w", encoding="utf-8") as f:
-                json.dump(self._upload_records, f, ensure_ascii=False, indent=2)
+            with self._record_lock:
+                with open(self.records_file, "w", encoding="utf-8") as f:
+                    json.dump(self._upload_records, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.warning("保存分类记录失败: %s", e)
 
@@ -198,19 +203,31 @@ class StarDotsProvider(ImageHostInterface):
 
                 logger.info("开始上传: %s", remote_filename)
 
-                with open(file_path, "rb") as f:
-                    files = {
-                        "file": (remote_filename, f, mime_type),
-                        "space": (None, self.space),
-                    }
+                # 大图自动压缩
+                tmp_compressed = compress_image_if_large(file_path)
+                upload_path = tmp_compressed if tmp_compressed else file_path
 
-                    response = httpx.put(
-                        f"{self.base_url}/openapi/file/upload",
-                        headers=headers,
-                        files=files,
-                        verify=False,
-                        timeout=60.0,
-                    )
+                try:
+                    with open(upload_path, "rb") as f:
+                        files = {
+                            "file": (remote_filename, f, mime_type),
+                            "space": (None, self.space),
+                        }
+
+                        response = httpx.put(
+                            f"{self.base_url}/openapi/file/upload",
+                            headers=headers,
+                            files=files,
+                            verify=False,
+                            timeout=60.0,
+                        )
+                finally:
+                    # 清理临时压缩文件
+                    if tmp_compressed and tmp_compressed.exists():
+                        try:
+                            tmp_compressed.unlink()
+                        except OSError:
+                            pass
 
                     if response.status_code == 200:
                         result = response.json()

@@ -1,4 +1,13 @@
 document.addEventListener("DOMContentLoaded", () => {
+  // ── P3-2: 注册 Service Worker 离线包 ─────────────────────
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js").then((reg) => {
+      console.log("[PWA] SW 已注册，scope:", reg.scope);
+    }).catch((err) => {
+      console.warn("[PWA] SW 注册失败:", err);
+    });
+  }
+
   const selectionState = {
     enabled: false,
     items: new Map(),
@@ -162,6 +171,7 @@ document.addEventListener("DOMContentLoaded", () => {
       pruneSelectionState();
       displayCategories(emojiResponse, tagDescriptions);
       updateSidebar(emojiResponse, tagDescriptions);
+      initTagSidebar(); // P3-5: 标签筛选侧边栏
       updateSelectionUI();
     } catch (error) {
       if (error.name === "AbortError") {
@@ -2140,7 +2150,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (Array.isArray(emojis)) {
         emojis.forEach((emoji) => {
           const emojiItem = document.createElement("div");
-          emojiItem.className = "emoji-item";
+          emojiItem.className = "emoji-item skeleton";
           emojiItem.dataset.category = category;
           emojiItem.dataset.emoji = emoji;
           emojiItem.dataset.suppressClick = "false";
@@ -2188,9 +2198,21 @@ document.addEventListener("DOMContentLoaded", () => {
           if (entry.isIntersecting) {
             const emojiItem = entry.target;
             const bgUrl = emojiItem.getAttribute("data-bg");
-            emojiItem.style.backgroundImage = `url('${bgUrl}')`; // 加载背景图片
-            emojiItem.removeAttribute("data-bg"); // 移除临时属性
-            observer.unobserve(emojiItem); // 停止观察
+            // 预加载图片，完成后再显示
+            const img = new Image();
+            img.onload = () => {
+              emojiItem.style.backgroundImage = `url('${bgUrl}')`;
+              emojiItem.classList.remove("skeleton");
+              emojiItem.classList.add("loaded");
+            };
+            img.onerror = () => {
+              emojiItem.style.backgroundImage = `url('${bgUrl}')`;
+              emojiItem.classList.remove("skeleton");
+              emojiItem.classList.add("loaded");
+            };
+            img.src = bgUrl;
+            emojiItem.removeAttribute("data-bg");
+            observer.unobserve(emojiItem);
           }
         });
       },
@@ -2202,6 +2224,356 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     updateSelectionDecorations();
+
+    // P3-1 & P3-3: 绑定 Tooltip & Lightbox
+    bindEmojiTooltips();
+    bindEmojiLightbox();
+  }
+
+  // ================================================================
+  // P3-5: 标签筛选侧边栏 (Tag Sidebar)
+  // ================================================================
+
+  let currentTagFilter = null;
+  let tagFileMap = {}; // { "category/filename": ["tag1","tag2"] }
+
+  async function initTagSidebar() {
+    try {
+      const res = await fetch("/api/description/tags");
+      if (!res.ok) throw new Error("获取标签失败");
+      const data = await res.json();
+
+      tagFileMap = data.file_map || {};
+      const tagCloud = document.getElementById("tag-cloud");
+      const clearBtn = document.getElementById("tag-sidebar-clear-btn");
+      const filterInfo = document.getElementById("tag-filter-info");
+
+      if (!tagCloud) return;
+
+      // 清空 & 重建
+      tagCloud.innerHTML = "";
+
+      if (!data.tags || data.tags.length === 0) {
+        tagCloud.innerHTML =
+          '<p class="tag-loading">暂无标签，给表情添加描述标签吧~</p>';
+        return;
+      }
+
+      data.tags.forEach(({ name, count }) => {
+        const chip = document.createElement("span");
+        chip.className = "tag-chip";
+        chip.textContent = name;
+
+        const badge = document.createElement("span");
+        badge.className = "tag-count";
+        badge.textContent = count;
+        chip.appendChild(badge);
+
+        chip.addEventListener("click", () => {
+          // Toggle: 再次点击已选中标签则取消
+          if (currentTagFilter === name) {
+            currentTagFilter = null;
+            chip.classList.remove("active");
+            clearBtn.classList.add("hidden");
+            filterInfo.classList.add("hidden");
+          } else {
+            // 取消其他 active
+            tagCloud.querySelectorAll(".tag-chip.active").forEach((c) =>
+              c.classList.remove("active")
+            );
+            currentTagFilter = name;
+            chip.classList.add("active");
+            clearBtn.classList.remove("hidden");
+            filterInfo.classList.remove("hidden");
+          }
+          applyTagFilter();
+        });
+
+        tagCloud.appendChild(chip);
+      });
+
+      // 清除按钮
+      clearBtn.addEventListener("click", () => {
+        currentTagFilter = null;
+        tagCloud.querySelectorAll(".tag-chip.active").forEach((c) =>
+          c.classList.remove("active")
+        );
+        clearBtn.classList.add("hidden");
+        filterInfo.classList.add("hidden");
+        applyTagFilter();
+      });
+
+      // 恢复之前的筛选状态
+      if (currentTagFilter) {
+        const activeChip = tagCloud.querySelector(
+          `.tag-chip:not(.tag-count)`
+        );
+        // 用 textContent 匹配（去掉 count badge 的干扰）
+        const chips = tagCloud.querySelectorAll(".tag-chip");
+        let found = false;
+        chips.forEach((chip) => {
+          const tagName = chip.childNodes[0].textContent.trim();
+          if (tagName === currentTagFilter) {
+            chip.classList.add("active");
+            found = true;
+          }
+        });
+        if (found) {
+          clearBtn.classList.remove("hidden");
+          filterInfo.classList.remove("hidden");
+        } else {
+          currentTagFilter = null;
+        }
+        applyTagFilter();
+      }
+
+    } catch (err) {
+      console.warn("[TagSidebar] 加载标签失败:", err);
+      const tagCloud = document.getElementById("tag-cloud");
+      if (tagCloud) {
+        tagCloud.innerHTML =
+          '<p class="tag-loading">⚠ 标签加载失败</p>';
+      }
+    }
+  }
+
+  function applyTagFilter() {
+    const items = document.querySelectorAll(".emoji-item");
+    const filterInfo = document.getElementById("tag-filter-info");
+    const filterCount = document.getElementById("tag-filter-count");
+    let visibleCount = 0;
+
+    items.forEach((item) => {
+      const key = `${item.dataset.category}/${item.dataset.emoji}`;
+      const tags = tagFileMap[key] || [];
+
+      if (!currentTagFilter || tags.includes(currentTagFilter)) {
+        item.style.display = "";
+        visibleCount++;
+      } else {
+        item.style.display = "none";
+      }
+    });
+
+    // 也隐藏/显示空的分类标题
+    document.querySelectorAll(".category").forEach((cat) => {
+      const allItems = cat.querySelectorAll(".emoji-item");
+      let hasVisible = false;
+      allItems.forEach((item) => {
+        if (item.style.display !== "none") hasVisible = true;
+      });
+      if (!hasVisible) {
+        cat.style.display = "none";
+      } else {
+        cat.style.display = "";
+      }
+      const dropzone = cat.querySelector(".upload-dropzone");
+      if (dropzone) {
+        dropzone.style.display = cat.style.display === "none" ? "none" : "";
+      }
+    });
+
+    if (filterCount) filterCount.textContent = visibleCount;
+  }
+
+  // ================================================================
+  // P3-1: 悬停描述浮层 (Emoji Tooltip)
+  // ================================================================
+
+  const tooltipCache = {};
+
+  function createTooltipElement() {
+    const el = document.createElement("div");
+    el.className = "emoji-tooltip";
+    el.style.display = "none";
+    document.body.appendChild(el);
+    return el;
+  }
+
+  const tooltipEl = createTooltipElement();
+  let tooltipTimer = null;
+
+  function bindEmojiTooltips() {
+    document.querySelectorAll(".emoji-item:not(.skeleton)").forEach((item) => {
+      // skip items already bound
+      if (item.dataset.tooltipBound === "true") return;
+      item.dataset.tooltipBound = "true";
+
+      const category = item.dataset.category;
+      const emoji = item.dataset.emoji;
+
+      item.addEventListener("mouseenter", () => {
+        if (item.classList.contains("skeleton")) return;
+        const cacheKey = `${category}::${emoji}`;
+        if (tooltipCache[cacheKey]) {
+          showTooltip(item, tooltipCache[cacheKey]);
+          return;
+        }
+
+        // 延迟加载描述
+        tooltipTimer = setTimeout(async () => {
+          try {
+            const resp = await fetch(`/api/description/${category}/${encodeURIComponent(emoji)}`);
+            if (!resp.ok) throw new Error("no desc");
+            const data = await resp.json();
+            const desc = data.description || "";
+            tooltipCache[cacheKey] = desc;
+            if (item.matches(":hover")) showTooltip(item, desc);
+          } catch {
+            tooltipCache[cacheKey] = "";
+          }
+        }, 400);
+      });
+
+      item.addEventListener("mouseleave", () => {
+        clearTimeout(tooltipTimer);
+        hideTooltip();
+      });
+    });
+  }
+
+  function showTooltip(item, text) {
+    if (!text) return;
+    const rect = item.getBoundingClientRect();
+    tooltipEl.textContent = text;
+    tooltipEl.style.display = "block";
+    // force reflow to get dimensions
+    const tooltipWidth = tooltipEl.offsetWidth;
+    let left = rect.left + rect.width / 2 - tooltipWidth / 2;
+    // clamp to viewport
+    if (left < 8) left = 8;
+    if (left + tooltipWidth > window.innerWidth - 8) left = window.innerWidth - tooltipWidth - 8;
+    tooltipEl.style.left = left + "px";
+    tooltipEl.style.top = rect.top - tooltipEl.offsetHeight - 8 + "px";
+    requestAnimationFrame(() => tooltipEl.classList.add("visible"));
+  }
+
+  function hideTooltip() {
+    tooltipEl.classList.remove("visible");
+    tooltipEl.style.display = "none";
+  }
+
+  // ================================================================
+  // P3-3: 画廊 Lightbox
+  // ================================================================
+
+  function bindEmojiLightbox() {
+    const overlay = document.getElementById("lightbox");
+    const imgEl = document.getElementById("lightbox-img");
+    const filenameEl = document.getElementById("lightbox-filename");
+    const indexEl = document.getElementById("lightbox-index");
+    const closeBtn = document.getElementById("lightbox-close");
+    const prevBtn = document.getElementById("lightbox-prev");
+    const nextBtn = document.getElementById("lightbox-next");
+
+    if (!overlay || overlay.dataset.bound === "true") return;
+    overlay.dataset.bound = "true";
+
+    let currentIndex = -1;
+    let currentImages = [];
+
+    function getVisibleImages() {
+      const items = document.querySelectorAll(".emoji-item:not(.skeleton)");
+      const imgs = [];
+      items.forEach((item) => {
+        const bg = item.style.backgroundImage;
+        if (!bg) return;
+        const match = bg.match(/url\(['"]?([^'"]+)['"]?\)/);
+        if (match) {
+          const pathParts = item.dataset.emoji ? item.dataset.emoji.split(".") : [];
+          const ext = pathParts.length > 1 ? pathParts.pop() : "png";
+          const name = pathParts.join(".") || "emoji";
+          imgs.push({
+            url: match[1],
+            name: name + "." + ext,
+            category: item.dataset.category,
+            emoji: item.dataset.emoji,
+          });
+        }
+      });
+      return imgs;
+    }
+
+    function showImage(index) {
+      if (index < 0 || index >= currentImages.length) return;
+      currentIndex = index;
+      const img = currentImages[index];
+      imgEl.src = img.url;
+      filenameEl.textContent = img.name;
+      indexEl.textContent = `${index + 1} / ${currentImages.length}`;
+    }
+
+    function open(imgUrl, imgName, index) {
+      currentImages = getVisibleImages();
+      currentIndex = index;
+      overlay.classList.add("active");
+      imgEl.src = imgUrl;
+      filenameEl.textContent = imgName || "";
+      indexEl.textContent = `${currentIndex + 1} / ${currentImages.length}`;
+      document.body.style.overflow = "hidden";
+    }
+
+    function close() {
+      overlay.classList.remove("active");
+      document.body.style.overflow = "";
+      imgEl.src = "";
+    }
+
+    // 绑定点击
+    document.querySelectorAll(".emoji-item:not(.skeleton)").forEach((item) => {
+      if (item.dataset.lightboxBound === "true") return;
+      item.dataset.lightboxBound = "true";
+
+      item.addEventListener("click", (e) => {
+        // 不拦截选择/拖拽/上传
+        if (item.classList.contains("drag-ready") || item.classList.contains("dragging")) return;
+        if (item.dataset.suppressClick === "true") return;
+        if (e.target.closest(".delete-btn") || e.target.closest(".selection-indicator")) return;
+
+        const bg = item.style.backgroundImage;
+        if (!bg) return;
+        const match = bg.match(/url\(['"]?([^'"]+)['"]?\)/);
+        if (!match) return;
+
+        const pathParts = item.dataset.emoji ? item.dataset.emoji.split(".") : [];
+        const ext = pathParts.length > 1 ? pathParts.pop() : "png";
+        const name = (pathParts.join(".") || "emoji") + "." + ext;
+
+        currentImages = getVisibleImages();
+        const idx = currentImages.findIndex(
+          (img) => img.url === match[1]
+        );
+        open(match[1], name, idx >= 0 ? idx : 0);
+      });
+    });
+
+    // 左右按钮
+    prevBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (currentIndex > 0) showImage(currentIndex - 1);
+    });
+    nextBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (currentIndex < currentImages.length - 1) showImage(currentIndex + 1);
+    });
+
+    // 关闭
+    closeBtn.addEventListener("click", close);
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) close();
+    });
+
+    // 键盘导航
+    document.addEventListener("keydown", (e) => {
+      if (!overlay.classList.contains("active")) return;
+      if (e.key === "Escape") {
+        close();
+      } else if (e.key === "ArrowLeft" && currentIndex > 0) {
+        showImage(currentIndex - 1);
+      } else if (e.key === "ArrowRight" && currentIndex < currentImages.length - 1) {
+        showImage(currentIndex + 1);
+      }
+    });
   }
 
   // 更新侧边栏目录
@@ -2275,12 +2647,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (batchDeleteBtn) {
       batchDeleteBtn.disabled = !selectionState.enabled || selectedCount === 0;
+      batchDeleteBtn.classList.toggle("hidden", !selectionState.enabled);
     }
     if (batchMoveBtn) {
       batchMoveBtn.disabled =
         !selectionState.enabled ||
         selectedCount === 0 ||
         availableMoveTargets.length === 0;
+      batchMoveBtn.classList.toggle("hidden", !selectionState.enabled);
     }
   }
 
@@ -3705,6 +4079,27 @@ document.addEventListener("DOMContentLoaded", () => {
   window.editCategory = editCategory;
   window.cancelEdit = cancelEdit;
   window.saveCategory = saveCategory;
+
+  // ── P4: 自动刷新轮询（检测插件重启 / 表情包更新）──
+  let lastVersion = null;
+
+  async function checkVersion() {
+    try {
+      const res = await fetch("/api/version");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (lastVersion === null) {
+        lastVersion = data.version; // 首次记录，不弹窗
+      } else if (data.version !== lastVersion) {
+        lastVersion = data.version;
+        showToast("检测到后端已更新，页面即将刷新…", "info", "刷新通知");
+        setTimeout(() => location.reload(), 1500);
+      }
+    } catch (_) {}
+  }
+
+  checkVersion(); // 立即执行一次
+  setInterval(checkVersion, 5000); // 每 5 秒轮询
 
   // 初始化加载数据
   syncSidebarLayout();

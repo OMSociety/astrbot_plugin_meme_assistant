@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 import time
 from pathlib import Path
 
@@ -12,14 +13,16 @@ class UploadTracker:
     def __init__(self, tracker_file: Path):
         self.tracker_file = Path(tracker_file)
         self.uploaded_files: dict[str, dict] = {}
+        self._io_lock = threading.Lock()
         self.load()
 
     def load(self):
         """加载上传记录"""
         if self.tracker_file.exists():
             try:
-                with open(self.tracker_file, encoding="utf-8") as f:
-                    self.uploaded_files = json.load(f)
+                with self._io_lock:
+                    with open(self.tracker_file, encoding="utf-8") as f:
+                        self.uploaded_files = json.load(f)
                 logger.info(f"加载上传记录: {len(self.uploaded_files)} 个文件")
             except Exception as e:
                 logger.error(f"加载上传记录失败: {e}")
@@ -31,8 +34,9 @@ class UploadTracker:
         """保存上传记录"""
         try:
             self.tracker_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.tracker_file, "w", encoding="utf-8") as f:
-                json.dump(self.uploaded_files, f, ensure_ascii=False, indent=2)
+            with self._io_lock:
+                with open(self.tracker_file, "w", encoding="utf-8") as f:
+                    json.dump(self.uploaded_files, f, ensure_ascii=False, indent=2)
             logger.info(f"保存上传记录: {len(self.uploaded_files)} 个文件")
         except Exception as e:
             logger.error(f"保存上传记录失败: {e}")
@@ -46,13 +50,14 @@ class UploadTracker:
         """标记文件为已上传"""
         rel_path = str(Path(category) / file_path.name) if category else file_path.name
 
-        self.uploaded_files[rel_path] = {
-            "filename": file_path.name,
-            "category": category,
-            "remote_url": remote_url,
-            "upload_time": time.time(),
-            "file_size": file_path.stat().st_size if file_path.exists() else 0,
-        }
+        with self._io_lock:
+            self.uploaded_files[rel_path] = {
+                "filename": file_path.name,
+                "category": category,
+                "remote_url": remote_url,
+                "upload_time": time.time(),
+                "file_size": file_path.stat().st_size if file_path.exists() else 0,
+            }
         self.save()
         logger.info(f"标记为已上传: {rel_path}")
 
@@ -63,13 +68,19 @@ class UploadTracker:
     def remove_record(self, file_path: Path, category: str = ""):
         """移除上传记录"""
         rel_path = str(Path(category) / file_path.name) if category else file_path.name
-        if rel_path in self.uploaded_files:
-            del self.uploaded_files[rel_path]
+        with self._io_lock:
+            if rel_path in self.uploaded_files:
+                del self.uploaded_files[rel_path]
+                removed = True
+            else:
+                removed = False
+        if removed:
             self.save()
             logger.info(f"移除上传记录: {rel_path}")
 
     def clear_record(self):
         """清空上传记录"""
-        self.uploaded_files = {}
+        with self._io_lock:
+            self.uploaded_files = {}
         self.save()
         logger.info("上传记录已清空")

@@ -107,14 +107,17 @@ MEME_IDENTIFY_QUEUE_PATH = (
 TEMP_DIR = PLUGIN_DATA_DIR / "temp"
 DEFAULT_MEMES_INIT_MARKER = PLUGIN_DATA_DIR / ".default_memes_initialized"
 
-# 确保目录存在
-os.makedirs(MEMES_DIR, exist_ok=True)
-os.makedirs(TEMP_DIR, exist_ok=True)
+# 目录在 init_plugin() 中创建，不在此处产生副作用
+_initialized = False
 
-# 添加日志输出帮助调试
-print(f"插件目录: {PLUGIN_DIR}", file=sys.stderr)
-print(f"插件数据目录: {PLUGIN_DATA_DIR}", file=sys.stderr)
-print(f"表情包目录: {MEMES_DIR}", file=sys.stderr)
+def _ensure_dirs():
+    """惰性创建必要目录（供 init_plugin 调用）"""
+    global _initialized
+    if _initialized:
+        return
+    os.makedirs(MEMES_DIR, exist_ok=True)
+    os.makedirs(TEMP_DIR, exist_ok=True)
+    _initialized = True
 
 # 默认的类别描述
 DEFAULT_CATEGORY_DESCRIPTIONS = {

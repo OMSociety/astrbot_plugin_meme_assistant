@@ -36,15 +36,17 @@
     }
   },
   "webui_port": {
-    "description": "Web UI 端口号",
+    "description": "WebUI 管理后台端口号",
     "type": "int",
-    "default": 5000
+    "default": 5000,
+    "hint": "修改后需重启插件生效"
   },
   "webui_token": {
     "description": "WebUI 登录 Token",
     "type": "string",
     "default": "",
-    "hint": "留空则自动生成随机 Token，重启后自动更新"
+    "hint": "留空则自动生成随机Token",
+    "_advanced": true
   },
   "prompt": {
     "description": "自动添加的提示词(类别描述自动插入到提示词中)",
@@ -93,13 +95,14 @@
     "description": "静态图转GIF发送",
     "type": "bool",
     "default": false,
-    "hint": "开启后，发送静态图片表情时会将其转换为1帧的GIF格式"
+    "hint": "开启后发送静态图表情时会转为1帧GIF格式",
+    "_advanced": true
   },
   "max_emotions_per_message": {
-    "description": "每次回复最多使用表情数量",
+    "description": "单次回复表情上限",
     "type": "int",
     "default": 2,
-    "hint": "每次回复最多使用表情数量"
+    "hint": "每次回复最多插入的表情数量"
   },
   "emotions_probability": {
     "description": "表情出现概率",
@@ -134,7 +137,8 @@
     "description": "移除无效备用标记",
     "type": "bool",
     "default": true,
-    "hint": "如果为true，将移除无法识别的()或[]标记内容；如遇括号内容被误删问题，请关闭"
+    "hint": "移除无法识别的()或[]标记内容；如括号被误删请关闭",
+    "_advanced": true
   },
   "enable_repeated_emotion_detection": {
     "description": "启用重复表情检测",
@@ -143,7 +147,7 @@
     "hint": "如果为true，则会尝试检测重复的表情, 防止重复使用表情(例如angryangryangry), 一般情况建议开启"
   },
   "high_confidence_emotions": {
-    "description": "高置信度表情列表，即使在英文上下文中也可能被识别",
+    "description": "高置信度表情标签",
     "type": "list",
     "default": [
       "angry",
@@ -168,10 +172,11 @@
     ]
   },
   "content_cleanup_rule": {
-    "description": "内容过滤正则表达式",
+    "description": "内容过滤正则",
     "type": "string",
     "default": "&&[a-zA-Z]*&&",
-    "hint": "移除分段后内容中的指定内容。如填写 `[。？！]` 将移除所有的句号、问号、感叹号。"
+    "hint": "移除分段后内容中的匹配文本，一般无需改动",
+    "_advanced": true
   },
   "enable_mixed_message": {
     "description": "启用回复带图",
@@ -194,7 +199,8 @@
     "description": "流式传输兼容",
     "type": "bool",
     "default": false,
-    "hint": "开启后，在流式传输模式下表情图片将作为独立消息发送（流式模式下无法混合图文）"
+    "hint": "流式模式下表情图片作为独立消息发送",
+    "_advanced": true
   },
   "meme_identify_enabled": {
     "description": "启用 LLM 自动识别表情包描述",
@@ -219,6 +225,21 @@
     "description": "批量识别并发数",
     "type": "int",
     "default": 2,
-    "hint": "控制同时识别表情包的数量，过高可能触发 API 限流"
+    "hint": "同时识别图片的数量，过高可能触发限流",
+    "_advanced": true
+  },
+  "meme_identify_circuit_threshold": {
+    "description": "识别熔断阈值",
+    "type": "int",
+    "default": 5,
+    "hint": "连续失败 N 次后暂停识别，0=禁用",
+    "_advanced": true
+  },
+  "meme_identify_circuit_cooldown": {
+    "description": "熔断冷却时间（秒）",
+    "type": "int",
+    "default": 300,
+    "hint": "熔断后等待多久再尝试恢复",
+    "_advanced": true
   }
 }
