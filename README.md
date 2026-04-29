@@ -89,7 +89,7 @@ pip install -r requirements.txt
 
 | 功能 | 说明 |
 |:----|:----|
-| 拖拽管理 | 表情包拖拽移动、批量选择、复制粘贴 |
+| 拖拽管理 | 长按 0.8 秒进入拖拽模式，支持跨分类移动、批量选择、复制粘贴 |
 | 分类管理 | 创建/编辑/删除分类，实时生效 |
 | 上传进度 | 上传时可见进度条与结果提示，同内容文件自动跳过 |
 | 批量操作 | 批量删除、分类清空、全量清空（含二次确认） |
@@ -280,21 +280,27 @@ astrbot_plugin_meme_assistant/
 │   ├── models.py                     # 数据模型与工具函数
 │   └── provider_registry.py          # 图床 Provider 注册中心
 ├── image_host/                       # 图床同步模块
+│   ├── __init__.py
 │   ├── img_sync.py                   # 同步入口
+│   ├── config.json                   # 图床配置文件
 │   ├── provider_registry.py          # Provider 注册中心
 │   ├── core/                         # 核心同步逻辑
+│   │   ├── __init__.py
 │   │   ├── sync_manager.py
 │   │   ├── file_handler.py
 │   │   └── upload_tracker.py
 │   ├── interfaces/                   # 图床接口定义
+│   │   ├── __init__.py
 │   │   └── image_host.py
 │   └── providers/                    # 图床服务商
+│       ├── __init__.py
 │       ├── stardots_provider.py
 │       ├── cos_provider.py
 │       ├── oss_provider.py
 │       ├── s3_provider.py
 │       └── provider_template.py
 ├── providers/                        # 图床同步适配层
+│   ├── __init__.py
 │   ├── stardots_sync.py
 │   ├── cos_sync.py
 │   ├── oss_sync.py
@@ -305,6 +311,8 @@ astrbot_plugin_meme_assistant/
 │       ├── script.js                 # 前端逻辑（含自动版本轮询）
 │       └── sw.js                     # Service Worker（离线缓存）
 ├── templates/                        # WebUI 模板
+│   ├── index.html                    # 管理后台主页
+│   └── login.html                    # 登录页
 ├── tests/                            # 单元测试
 │   └── test_core.py                  # 核心功能测试（15 个用例）
 ├── _conf_schema.json                 # 配置项 schema

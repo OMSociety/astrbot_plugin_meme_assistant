@@ -100,10 +100,15 @@ document.addEventListener("DOMContentLoaded", () => {
   const identifyAllBtn = document.getElementById("identify-all-btn");
   const reidentifyAllBtn = document.getElementById("reidentify-all-btn");
   const identifyCoverage = document.getElementById("identify-coverage");
+  // P2: 识图进度条
+  const identifyProgressBar = document.getElementById("identify-progress-bar");
+  const identifyProgressFill = document.getElementById("identify-progress-fill");
+  const identifyProgressLabel = document.getElementById("identify-progress-label");
+  let identifyPollTimer = null;
   const MOBILE_LAYOUT_MEDIA = "(max-width: 960px)";
   const DRAG_HUD_OFFSET_X = 18;
   const DRAG_HUD_OFFSET_Y = 88;
-  const LONG_PRESS_DURATION_MS = 3000;
+  const LONG_PRESS_DURATION_MS = 800;
   const LONG_PRESS_TICK_MS = 60;
   const LONG_PRESS_CANCEL_DISTANCE_PX = 18;
   const DRAG_READY_TIMEOUT_MS = 15000;
@@ -146,9 +151,20 @@ document.addEventListener("DOMContentLoaded", () => {
   let activeCategoryEdit = null;
   let pendingMoveTargetItems = [];
 
+  // P2: 全局加载进度条
+  function showLoadingBar() {
+    const bar = document.getElementById("global-loading-bar");
+    if (bar) bar.classList.add("active");
+  }
+  function hideLoadingBar() {
+    const bar = document.getElementById("global-loading-bar");
+    if (bar) bar.classList.remove("active");
+  }
+
   // 获取表情包数据和描述
   async function fetchEmojis() {
     const requestToken = startLatestRequest("emojis");
+    showLoadingBar();
     try {
       const [emojiResponse, tagDescriptions] = await Promise.all([
         fetch("/api/emoji", { signal: requestToken.controller.signal }).then((res) => {
@@ -179,6 +195,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       console.error("加载表情包数据失败", error);
     } finally {
+      hideLoadingBar();
       finishLatestRequest("emojis", requestToken);
     }
   }
@@ -1111,7 +1128,8 @@ document.addEventListener("DOMContentLoaded", () => {
   function startLongPress(emojiItem, category, emoji, event) {
     if (
       (event.pointerType === "mouse" && event.button !== 0) ||
-      event.target.closest(".delete-btn")
+      event.target.closest(".delete-btn") ||
+      event.target.closest(".desc-btn")
     ) {
       return;
     }
@@ -1315,7 +1333,7 @@ document.addEventListener("DOMContentLoaded", () => {
         uploadBlock.classList.remove("uploading");
         uploadBlock.setAttribute("aria-busy", "false");
         uploadTitle.textContent = "上传表情包";
-        uploadHint.textContent = "点击上传图片，或将表情长按 3 秒后拖到这里";
+        uploadHint.textContent = `点击上传图片，或将表情长按 ${Math.ceil(LONG_PRESS_DURATION_MS / 1000)} 秒后拖到这里`;
         uploadMeta.textContent = "";
         uploadMeta.classList.add("hidden");
         uploadProgress.classList.add("hidden");
@@ -1532,7 +1550,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const uploadHint = document.createElement("div");
     uploadHint.className = "emoji-upload-hint";
-    uploadHint.textContent = "点击上传图片，或将表情长按 3 秒后拖到这里";
+    uploadHint.textContent = `点击上传图片，或将表情长按 ${Math.ceil(LONG_PRESS_DURATION_MS / 1000)} 秒后拖到这里`;
 
     const uploadMeta = document.createElement("div");
     uploadMeta.className = "emoji-upload-meta hidden";
@@ -1695,7 +1713,10 @@ document.addEventListener("DOMContentLoaded", () => {
         emojiItem.dataset.suppressClick = "false";
         return;
       }
-      if (!selectionState.enabled) return;
+      if (!selectionState.enabled) {
+        openDescModal(category, emoji, emojiItem);
+        return;
+      }
       toggleEmojiSelection(category, emoji);
     });
 
@@ -2040,7 +2061,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function waitForSyncCompletion() {
     while (true) {
-      const status = await requestJson("/api/img_host/sync/check_process", {}, {
+      const status = await requestJson("/api/img_host/sync/progress", {}, {
         defaultErrorMessage: "检查同步状态失败",
       });
 
@@ -2091,6 +2112,9 @@ document.addEventListener("DOMContentLoaded", () => {
       selectionSummary.textContent = selectionState.enabled
         ? `已选 ${categorySelectedCount} / ${emojis.length || 0}`
         : "未开启批量选择";
+      if (!selectionState.enabled) {
+        selectionSummary.classList.add("hidden");
+      }
 
       titleMain.appendChild(categoryName);
       titleMain.appendChild(selectionSummary);
@@ -2114,17 +2138,18 @@ document.addEventListener("DOMContentLoaded", () => {
         onClick: () => toggleCategorySelection(category, emojis),
       });
       const clearCategoryButton = createButton({
-        className: "clear-category-btn danger",
+        className: "clear-category-btn",
         text: "清空本类",
         onClick: () => clearCategory(category),
       });
-      const deleteCategoryButton = createIconButton({
-        className: "delete-category-btn icon-only-btn danger",
-        iconClass: "fas fa-trash",
-        title: `删除类别 ${category}`,
-        ariaLabel: `删除类别 ${category}`,
+      const deleteCategoryButton = createButton({
+        className: "delete-category-btn",
+        text: "删除本类",
         onClick: () => deleteCategory(category),
       });
+      const trashIcon = document.createElement("i");
+      trashIcon.className = "fas fa-trash";
+      deleteCategoryButton.prepend(trashIcon);
 
       actionsDiv.appendChild(editButton);
       actionsDiv.appendChild(toggleCategoryButton);
@@ -2161,6 +2186,17 @@ document.addEventListener("DOMContentLoaded", () => {
           selectionIndicator.className = "selection-indicator";
           selectionIndicator.setAttribute("aria-label", "选择表情包");
           emojiItem.appendChild(selectionIndicator);
+
+          // 描述编辑按钮
+          const descBtn = document.createElement("button");
+          descBtn.className = "desc-btn";
+          descBtn.innerHTML = "📝";
+          descBtn.onclick = (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            openDescModal(category, emoji, emojiItem);
+          };
+          emojiItem.appendChild(descBtn);
 
           // 删除按钮
           const deleteBtn = document.createElement("button");
@@ -2465,6 +2501,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const closeBtn = document.getElementById("lightbox-close");
     const prevBtn = document.getElementById("lightbox-prev");
     const nextBtn = document.getElementById("lightbox-next");
+    const descPanel = document.getElementById("lightbox-description-panel");
+    const descText = document.getElementById("lightbox-desc-text");
+    const descStatus = document.getElementById("lightbox-desc-status");
+    const descSaveBtn = document.getElementById("lightbox-desc-save");
+    const descReidentifyBtn = document.getElementById("lightbox-desc-reidentify");
+    let currentImgUrl = "";
 
     if (!overlay || overlay.dataset.bound === "true") return;
     overlay.dataset.bound = "true";
@@ -2498,26 +2540,153 @@ document.addEventListener("DOMContentLoaded", () => {
       if (index < 0 || index >= currentImages.length) return;
       currentIndex = index;
       const img = currentImages[index];
+      currentImgUrl = img.url;
       imgEl.src = img.url;
       filenameEl.textContent = img.name;
       indexEl.textContent = `${index + 1} / ${currentImages.length}`;
+
+      // 刷新描述
+      if (img && img.category && img.emoji) {
+        descPanel.style.display = "block";
+        fetchDescription(img.category, img.emoji);
+      } else {
+        descPanel.style.display = "none";
+      }
     }
 
     function open(imgUrl, imgName, index) {
       currentImages = getVisibleImages();
       currentIndex = index;
+      currentImgUrl = imgUrl;
       overlay.classList.add("active");
       imgEl.src = imgUrl;
       filenameEl.textContent = imgName || "";
       indexEl.textContent = `${currentIndex + 1} / ${currentImages.length}`;
       document.body.style.overflow = "hidden";
+
+      // 显示描述面板并加载描述
+      const img = currentImages[index];
+      if (img && img.category && img.emoji) {
+        descPanel.style.display = "block";
+        fetchDescription(img.category, img.emoji);
+      } else {
+        descPanel.style.display = "none";
+      }
+    }
+
+    function fetchDescription(category, filename) {
+      descText.value = "";
+      descStatus.textContent = "加载中...";
+      descStatus.className = "lightbox-desc-status";
+      descSaveBtn.disabled = true;
+
+      fetch(`/api/description/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.description && data.description !== "待识别") {
+            descText.value = data.description;
+          } else {
+            descText.value = "";
+          }
+          descStatus.textContent = data && data.description && data.description !== "待识别" ? "已有描述" : "暂无描述";
+          descStatus.className = "lightbox-desc-status";
+          descSaveBtn.disabled = false;
+        })
+        .catch(err => {
+          console.error("获取描述失败:", err);
+          descStatus.textContent = "加载失败";
+          descStatus.className = "lightbox-desc-status error";
+          descSaveBtn.disabled = false;
+        });
     }
 
     function close() {
       overlay.classList.remove("active");
       document.body.style.overflow = "";
       imgEl.src = "";
+      descPanel.style.display = "none";
+      descText.value = "";
+      descStatus.textContent = "";
+      descStatus.className = "lightbox-desc-status";
+      currentImgUrl = "";
     }
+
+    // 保存描述
+    descSaveBtn?.addEventListener("click", () => {
+      const img = currentImages[currentIndex];
+      if (!img || !img.category || !img.emoji) return;
+      const description = descText.value.trim();
+      if (!description) return;
+
+      descSaveBtn.disabled = true;
+      descStatus.textContent = "保存中...";
+      descStatus.className = "lightbox-desc-status";
+
+      fetch(`/api/description/${encodeURIComponent(img.category)}/${encodeURIComponent(img.emoji)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description }),
+      })
+        .then(res => res.json())
+        .then(() => {
+          descStatus.textContent = "✅ 已保存";
+          descStatus.className = "lightbox-desc-status saved";
+          descSaveBtn.disabled = false;
+          setTimeout(() => {
+            descStatus.textContent = "已有描述";
+            descStatus.className = "lightbox-desc-status";
+          }, 2000);
+        })
+        .catch(err => {
+          console.error("保存描述失败:", err);
+          descStatus.textContent = "保存失败";
+          descStatus.className = "lightbox-desc-status error";
+          descSaveBtn.disabled = false;
+        });
+    });
+
+    // 从 lightbox 重新识图
+    descReidentifyBtn?.addEventListener("click", () => {
+      const img = currentImages[currentIndex];
+      if (!img || !img.category || !img.emoji) return;
+
+      descReidentifyBtn.disabled = true;
+      descStatus.textContent = "识别中...";
+      descStatus.className = "lightbox-desc-status";
+
+      fetch("/api/description/identify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category: img.category,
+          filename: img.emoji,
+        }),
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data.message === "ok" || data.description) {
+            descText.value = data.description || "";
+            descStatus.textContent = "✅ 识别完成";
+            descStatus.className = "lightbox-desc-status saved";
+            setTimeout(() => {
+              descStatus.textContent = "已有描述";
+              descStatus.className = "lightbox-desc-status";
+            }, 2000);
+          } else {
+            descStatus.textContent = "识别失败";
+            descStatus.className = "lightbox-desc-status error";
+          }
+          descReidentifyBtn.disabled = false;
+          // 刷新覆盖率徽章
+          refreshIdentifyCoverage();
+        })
+        .catch(err => {
+          console.error("单张识图失败:", err);
+          descStatus.textContent = "识别失败";
+          descStatus.className = "lightbox-desc-status error";
+          descReidentifyBtn.disabled = false;
+        });
+    });
 
     // 绑定点击
     document.querySelectorAll(".emoji-item:not(.skeleton)").forEach((item) => {
@@ -2528,7 +2697,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // 不拦截选择/拖拽/上传
         if (item.classList.contains("drag-ready") || item.classList.contains("dragging")) return;
         if (item.dataset.suppressClick === "true") return;
-        if (e.target.closest(".delete-btn") || e.target.closest(".selection-indicator")) return;
+        if (e.target.closest(".delete-btn") || e.target.closest(".desc-btn") || e.target.closest(".selection-indicator")) return;
 
         const bg = item.style.backgroundImage;
         if (!bg) return;
@@ -2575,6 +2744,115 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
+
+  // ===== 描述编辑弹窗 =====
+  const descModal = document.getElementById("desc-edit-modal");
+  const descModalImg = document.getElementById("desc-modal-img");
+  const descModalCategory = document.getElementById("desc-modal-category");
+  const descModalFilename = document.getElementById("desc-modal-filename");
+  const descModalText = document.getElementById("desc-modal-text");
+  const descModalTags = document.getElementById("desc-modal-tags");
+  const descModalSaveBtn = document.getElementById("desc-modal-save-btn");
+  const descModalCloseBtn = document.getElementById("desc-modal-close");
+  const descModalOverlay = document.getElementById("desc-modal-overlay");
+
+  let descCurrentCategory = "";
+  let descCurrentFilename = "";
+  let descCurrentDescription = "";
+  let descCurrentTags = [];
+
+  function openDescModal(category, filename, emojiItem) {
+    descCurrentCategory = category;
+    descCurrentFilename = filename;
+
+    const imgUrl = emojiItem ? (emojiItem.getAttribute("data-bg") || emojiItem.style.backgroundImage?.match(/url\(['"]?([^'"]+)['"]?\)/)?.[1] || "") : "";
+
+    descModalImg.src = imgUrl || ("/memes/" + category + "/" + filename);
+    descModalCategory.textContent = category;
+    descModalFilename.textContent = filename;
+    descModalText.value = "加载中...";
+    descModalTags.value = "";
+    descModalSaveBtn.disabled = true;
+
+    descModalOverlay.classList.remove("hidden");
+    descModalOverlay.setAttribute("aria-hidden", "false");
+    document.body.style.overflow = "hidden";
+
+    fetch("/api/description/" + encodeURIComponent(category) + "/" + encodeURIComponent(filename))
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.description && data.description !== "待识别") {
+          descModalText.value = data.description;
+          descCurrentDescription = data.description;
+        } else {
+          descModalText.value = "";
+          descCurrentDescription = "";
+        }
+        if (data && data.tags && Array.isArray(data.tags)) {
+          descModalTags.value = data.tags.join(", ");
+          descCurrentTags = data.tags;
+        } else {
+          descModalTags.value = "";
+          descCurrentTags = [];
+        }
+        descModalSaveBtn.disabled = false;
+      })
+      .catch(() => {
+        descModalText.value = "";
+        descModalTags.value = "";
+        descModalSaveBtn.disabled = false;
+      });
+  }
+
+  function closeDescModal() {
+    descModalOverlay.classList.add("hidden");
+    descModalOverlay.setAttribute("aria-hidden", "true");
+    document.body.style.overflow = "";
+    descCurrentCategory = "";
+    descCurrentFilename = "";
+    descCurrentDescription = "";
+    descCurrentTags = [];
+  }
+
+  descModalCloseBtn.addEventListener("click", closeDescModal);
+  descModalOverlay.addEventListener("click", (e) => {
+    if (e.target === descModalOverlay) closeDescModal();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !descModalOverlay.classList.contains("hidden")) {
+      closeDescModal();
+    }
+  });
+
+  descModalSaveBtn.addEventListener("click", () => {
+    if (!descCurrentCategory || !descCurrentFilename) return;
+    const newDesc = descModalText.value.trim();
+    const newTags = descModalTags.value.split(",").map(t => t.trim()).filter(Boolean);
+    descModalSaveBtn.disabled = true;
+    descModalSaveBtn.textContent = "保存中...";
+
+    fetch("/api/description/" + encodeURIComponent(descCurrentCategory) + "/" + encodeURIComponent(descCurrentFilename), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: newDesc, tags: newTags })
+    })
+      .then(res => res.json())
+      .then(() => {
+        descModalSaveBtn.textContent = "✅ 已保存";
+        descCurrentDescription = newDesc;
+        descCurrentTags = newTags;
+        showToast("描述已保存 🎉", "success");
+        setTimeout(() => {
+          descModalSaveBtn.textContent = "💾 保存";
+          descModalSaveBtn.disabled = false;
+        }, 2000);
+      })
+      .catch(() => {
+        showToast("保存失败 😢", "error");
+        descModalSaveBtn.textContent = "💾 保存";
+        descModalSaveBtn.disabled = false;
+      });
+  });
 
   // 更新侧边栏目录
   function updateSidebar(data, tagDescriptions) {
@@ -2688,17 +2966,21 @@ document.addEventListener("DOMContentLoaded", () => {
       const allSelected = hasEmojis && selectedCount === totalCount;
 
       if (summary) {
-        summary.textContent = selectionState.enabled
-          ? `已选 ${selectedCount} / ${totalCount}`
-          : "未开启批量选择";
+        if (selectionState.enabled) {
+          summary.textContent = `已选 ${selectedCount} / ${totalCount}`;
+          summary.classList.remove("hidden");
+        } else {
+          summary.classList.add("hidden");
+        }
       }
       if (selectAllBtn) {
-        selectAllBtn.disabled = !hasEmojis;
-        selectAllBtn.textContent = selectionState.enabled
-          ? allSelected
-            ? "取消本类"
-            : "本类全选"
-          : "本类选择";
+        if (selectionState.enabled) {
+          selectAllBtn.disabled = !hasEmojis;
+          selectAllBtn.textContent = allSelected ? "取消本类" : "本类全选";
+          selectAllBtn.classList.remove("hidden");
+        } else {
+          selectAllBtn.classList.add("hidden");
+        }
       }
     });
   }
@@ -3674,11 +3956,15 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (fragments.length === 0) {
-      const text = document.createElement("p");
-      text.textContent = "配置与文件夹结构一致！";
-      statusDiv.appendChild(text);
+      statusDiv.classList.add("hidden");
+      const syncDivider = document.querySelector(".sync-divider");
+      if (syncDivider) syncDivider.classList.add("hidden");
       return;
     }
+
+    statusDiv.classList.remove("hidden");
+    const syncDivider = document.querySelector(".sync-divider");
+    if (syncDivider) syncDivider.classList.remove("hidden");
 
     fragments.forEach((fragment) => {
       statusDiv.appendChild(fragment);
@@ -3830,10 +4116,11 @@ document.addEventListener("DOMContentLoaded", () => {
         { defaultErrorMessage: "提交全量识别失败" }
       );
       showToast(data.message || "已提交识别任务", "success", "全量识别");
+      restoreButton(btn);
+      pollIdentifyProgress();
     } catch (error) {
       console.error("全量识别失败:", error);
       showToast(error.message, "error", "全量识别失败");
-    } finally {
       restoreButton(btn);
     }
   }
@@ -3856,12 +4143,67 @@ document.addEventListener("DOMContentLoaded", () => {
         { defaultErrorMessage: "提交全量重识别失败" }
       );
       showToast(data.message || "已提交重识别任务", "success", "全量重识别");
+      restoreButton(btn);
+      pollIdentifyProgress();
     } catch (error) {
       console.error("全量重识别失败:", error);
       showToast(error.message, "error", "全量重识别失败");
-    } finally {
       restoreButton(btn);
     }
+  }
+
+  // P2: 轮询识图进度 & 渲染进度条
+  function pollIdentifyProgress() {
+    // 中断之前的轮询
+    if (identifyPollTimer) {
+      clearInterval(identifyPollTimer);
+      identifyPollTimer = null;
+    }
+
+    identifyProgressBar.style.display = "block";
+
+    identifyPollTimer = setInterval(async () => {
+      try {
+        const progress = await requestJson(
+          "/api/description/identify/progress",
+          {},
+          { defaultErrorMessage: "获取识别进度失败" }
+        );
+
+        const { active, total, completed, success, failed, current_category, current_filename } = progress;
+        const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+        identifyProgressFill.style.width = `${pct}%`;
+        if (!active && completed >= total) {
+          identifyProgressLabel.textContent =
+            `✅ 已完成 ${total} 个（成功 ${success}，失败 ${failed}）`;
+          identifyProgressFill.style.background = "#22c55e";
+          // 刷新覆盖率
+          fetchIdentifyCoverage();
+          // 3 秒后隐藏
+          setTimeout(() => {
+            if (identifyProgressLabel.textContent.startsWith("✅")) {
+              identifyProgressBar.style.display = "none";
+              identifyProgressFill.style.background = "";
+            }
+          }, 3000);
+          clearInterval(identifyPollTimer);
+          identifyPollTimer = null;
+        } else if (active) {
+          identifyProgressLabel.textContent =
+            `🔄 ${completed}/${total} — ${current_category || ""} / ${current_filename || ""}`;
+          identifyProgressFill.style.background = "";
+        } else {
+          // 无活跃任务但 completed < total，显示最终快照
+          identifyProgressLabel.textContent =
+            `⚠️ 已结束 ${completed}/${total}（成功 ${success}，失败 ${failed}）`;
+          clearInterval(identifyPollTimer);
+          identifyPollTimer = null;
+        }
+      } catch (e) {
+        console.error("轮询识图进度失败:", e);
+      }
+    }, 1500);
   }
 
   async function fetchIdentifyCoverage() {
@@ -3871,9 +4213,9 @@ document.addEventListener("DOMContentLoaded", () => {
         {},
         { defaultErrorMessage: "获取识别统计失败" }
       );
-      if (identifyCoverage && data && data.described_count !== undefined) {
-        const total = data.described_count + (data.undescribed_count || 0);
-        identifyCoverage.textContent = `${data.described_count} / ${total}（${total > 0 ? Math.round(data.described_count / total * 100) : 0}%）`;
+      if (identifyCoverage && data && data.with_description !== undefined) {
+        const total = data.with_description + (data.without_description || 0);
+        identifyCoverage.textContent = `${data.with_description} / ${total}（${total > 0 ? Math.round(data.with_description / total * 100) : 0}%）`;
       }
     } catch (e) {
       console.error("获取识别统计失败:", e);
@@ -4118,6 +4460,21 @@ document.addEventListener("DOMContentLoaded", () => {
       void checkSyncStatus(false);
       void checkImgHostSyncStatus(false);
       fetchIdentifyCoverage();
+      // P2: 页面加载/刷新时检查是否有进行中的识图任务，有则恢复进度条
+      void (async () => {
+        try {
+          const progress = await requestJson(
+            "/api/description/identify/progress",
+            {},
+            { defaultErrorMessage: "" }
+          );
+          if (progress && progress.active) {
+            pollIdentifyProgress();
+          }
+        } catch (e) {
+          // 静默失败，不影响页面正常加载
+        }
+      })();
     }, 180);
   })();
 

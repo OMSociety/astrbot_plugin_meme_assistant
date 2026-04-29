@@ -1,3 +1,4 @@
+import json
 import logging
 from pathlib import Path
 
@@ -16,10 +17,32 @@ class SyncManager:
         image_host: ImageHostInterface,
         local_dir: Path,
         upload_tracker: UploadTracker | None = None,
+        progress_file: Path | None = None,
     ):
         self.image_host = image_host
         self.file_handler = FileHandler(local_dir)
         self.upload_tracker = upload_tracker
+        self.progress_file = progress_file  # P1: 进度追踪文件
+
+    def _write_progress(self, task: str, current: int, total: int, step: str = "running"):
+        """P1: 写入同步进度到文件"""
+        if not self.progress_file:
+            return
+        try:
+            data = {"task": task, "current": current, "total": total, "step": step, "done": False}
+            self.progress_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.progress_file, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+        except Exception:
+            pass
+
+    def _clear_progress(self):
+        """P1: 清理进度文件"""
+        if self.progress_file and self.progress_file.exists():
+            try:
+                self.progress_file.unlink()
+            except OSError:
+                pass
 
     def _normalize_remote_id(self, remote_id: str, provider_name: str = None) -> str:
         """根据不同的图床提供商规范化远程文件ID"""
@@ -195,6 +218,8 @@ class SyncManager:
             skipped_count = 0
             total = len(to_upload)
 
+            self._write_progress("upload", 0, total, "uploading")
+
             for i, image in enumerate(to_upload, 1):
                 file_path = Path(image["path"])
                 category = image.get("category", "")
@@ -209,6 +234,8 @@ class SyncManager:
                         )
 
                     uploaded_count += 1
+                    if i % 5 == 0:
+                        self._write_progress("upload", i, total, "uploading")
                     if i % 10 == 0:
                         logger.info("上传进度: %d/%d", i, total)
 
@@ -216,6 +243,7 @@ class SyncManager:
                     logger.warning("上传失败: %s - %s", file_path.name, e)
                     skipped_count += 1
 
+            self._write_progress("upload", total, total, "done")
             logger.info(
                 "上传完成: 成功 %d 个，失败 %d 个", uploaded_count, skipped_count
             )
@@ -239,6 +267,8 @@ class SyncManager:
             skipped_count = 0
             total = len(to_download)
 
+            self._write_progress("download", 0, total, "downloading")
+
             for i, image in enumerate(to_download, 1):
                 try:
                     category = image.get("category", "")
@@ -253,6 +283,8 @@ class SyncManager:
 
                     if self.image_host.download_image(image, save_path):
                         downloaded_count += 1
+                        if i % 5 == 0:
+                            self._write_progress("download", i, total, "downloading")
                         if i % 10 == 0:
                             logger.info("下载进度: %d/%d", i, total)
                     else:
@@ -262,6 +294,7 @@ class SyncManager:
                     logger.warning("下载失败: %s - %s", filename, e)
                     skipped_count += 1
 
+            self._write_progress("download", total, total, "done")
             logger.info(
                 "下载完成: 成功 %d 个，失败/跳过 %d 个",
                 downloaded_count,

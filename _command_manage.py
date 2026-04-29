@@ -99,7 +99,7 @@ class CommandManageMixin:
     async def _stop_server_impl(self, event: AstrMessageEvent):
         """关闭表情包管理服务器。"""
         try:
-            is_running = bool(self.webui_process and self.webui_process.is_alive())
+            is_running = bool(self.webui_task and not self.webui_task.done())
             if not is_running:
                 yield event.plain_result("ℹ️ 管理后台当前未运行。")
                 return
@@ -108,8 +108,6 @@ class CommandManageMixin:
             yield event.plain_result("✅ 管理后台已关闭。")
         except Exception as e:
             yield event.plain_result(f"❌ 管理后台关闭失败：{str(e)}")
-        finally:
-            await self._cleanup_webui()
 
     async def _list_emotions_impl(self, event: AstrMessageEvent):
         """查看所有可用表情包类别。"""

@@ -11,7 +11,7 @@ from astrbot.core.utils.astrbot_path import (
 # 获取当前插件目录的绝对路径
 PLUGIN_DIR = Path(__file__).resolve().parent
 CURRENT_DIR = str(PLUGIN_DIR)
-DEFAULT_PLUGIN_NAME = "meme_manager"
+DEFAULT_PLUGIN_NAME = "meme_assistant"
 
 
 def resolve_plugin_name(plugin_name: str | None = None) -> str:

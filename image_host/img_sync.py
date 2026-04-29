@@ -55,6 +55,9 @@ class ImageSync:
         self.local_dir = Path(local_dir)
         self.provider_type = provider_type
 
+        # 同步并发锁：防止 WebUI / 命令同时触发多个同步任务
+        self._sync_lock = asyncio.Lock()
+
         # 使用 Provider 注册表创建实例
         provider = create_provider(provider_type, config)
         if provider is None:
@@ -65,10 +68,14 @@ class ImageSync:
         tracker_file = Path(local_dir) / ".upload_tracker.json"
         self.upload_tracker = UploadTracker(tracker_file)
 
+        # P1: 进度追踪文件
+        self._progress_file = Path(local_dir) / ".sync_progress.json"
+
         self.sync_manager = SyncManager(
             image_host=self.provider,
             local_dir=self.local_dir,
             upload_tracker=self.upload_tracker,
+            progress_file=self._progress_file,
         )
 
         self.sync_process = None
@@ -92,59 +99,62 @@ class ImageSync:
         启动同步任务并异步等待完成
 
         Args:
-            task: 同步任务类型 ('upload', 'download', 'sync_all')
+            task: 同步任务类型 ('upload', 'download', 'sync_all',
+                  'overwrite_to_remote', 'overwrite_from_remote')
 
         Returns:
             同步是否成功
         """
-        # 如果已有正在运行的同步任务，先停止它
-        if self.sync_process and self.sync_process.is_alive():
-            logger.warning("已有正在运行的同步任务，将先停止它")
-            self.stop_sync()
+        # 并发保护：同一时间只允许一个同步任务
+        async with self._sync_lock:
+            # 如果已有正在运行的同步任务，先停止它
+            if self.sync_process and self.sync_process.is_alive():
+                logger.warning("已有正在运行的同步任务，将先停止它")
+                self.stop_sync()
 
-        # 检查是否需要同步
-        status = self.check_status()
-        if task == "upload" and not status.get("to_upload"):
-            logger.info("没有文件需要上传")
-            return True
-        elif task == "download" and not status.get("to_download"):
-            logger.info("没有文件需要下载")
-            return True
-        elif task == "overwrite_to_remote" and not (
-            status.get("to_upload") or status.get("to_delete_remote")
-        ):
-            logger.info("云端已是最新且完全一致，无需覆盖")
-            return True
-        elif task == "overwrite_from_remote" and not (
-            status.get("to_download") or status.get("to_delete_local")
-        ):
-            logger.info("本地已是最新且完全一致，无需覆盖")
-            return True
-
-        # 创建并启动进程
-        self.sync_process = multiprocessing.Process(
-            target=run_sync_process, args=(self.config, str(self.local_dir), task)
-        )
-        self.sync_process.start()
-
-        # 创建异步任务来等待进程完成
-        loop = asyncio.get_event_loop()
-        self._sync_task = loop.run_in_executor(None, self.sync_process.join)
-
-        try:
-            # 等待进程完成
-            await self._sync_task
-            exit_code = self.sync_process.exitcode
-            if exit_code == 0:
-                logger.info("同步任务完成成功")
+            # 检查是否需要同步
+            status = self.check_status()
+            if task == "upload" and not status.get("to_upload"):
+                logger.info("没有文件需要上传")
                 return True
-            else:
-                logger.error(f"同步任务失败，进程退出码: {exit_code}")
+            elif task == "download" and not status.get("to_download"):
+                logger.info("没有文件需要下载")
+                return True
+            elif task == "overwrite_to_remote" and not (
+                status.get("to_upload") or status.get("to_delete_remote")
+            ):
+                logger.info("云端已是最新且完全一致，无需覆盖")
+                return True
+            elif task == "overwrite_from_remote" and not (
+                status.get("to_download") or status.get("to_delete_local")
+            ):
+                logger.info("本地已是最新且完全一致，无需覆盖")
+                return True
+
+            # 创建并启动进程
+            self.sync_process = multiprocessing.Process(
+                target=run_sync_process, args=(self.config, str(self.local_dir), task)
+            )
+            self.sync_process.start()
+
+            # 创建异步任务来等待进程完成
+            loop = asyncio.get_event_loop()
+            self._sync_task = loop.run_in_executor(None, self.sync_process.join)
+
+            try:
+                # 等待进程完成
+                await self._sync_task
+                exit_code = self.sync_process.exitcode
+                if exit_code == 0:
+                    logger.info("同步任务完成成功")
+                    return True
+                else:
+                    logger.error(f"同步任务失败，进程退出码: {exit_code}")
+                    return False
+            except Exception as e:
+                logger.error(f"同步任务异常: {str(e)}")
+                self.stop_sync()
                 return False
-        except Exception as e:
-            logger.error(f"同步任务异常: {str(e)}")
-            self.stop_sync()
-            return False
 
     def stop_sync(self):
         """停止当前正在运行的同步任务"""

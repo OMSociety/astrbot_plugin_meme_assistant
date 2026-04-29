@@ -74,7 +74,14 @@ async def get_emojis_by_category(category):
     emojis = get_emoji_by_category(category)
     if emojis is None:
         return jsonify({"message": "Category not found"}), 404
-    return jsonify(emojis if isinstance(emojis, list) else []), 200
+
+    # P1: 附带图片 URL 字段
+    enriched = [
+        {"name": name, "url": f"/memes/{category}/{name}"}
+        for name in emojis
+    ] if isinstance(emojis, list) else []
+
+    return jsonify(enriched), 200
 
 
 @api_handler
@@ -816,15 +823,48 @@ async def trigger_reidentify_all():
 
 
 @api_handler
-@api.route("/img_host/sync/check_process", methods=["GET"])
+@api.route("/description/identify/progress", methods=["GET"])
+async def get_identify_progress():
+    """返回当前识图任务进度"""
+    meme_mgr = _get_plugin_service("meme_manager")
+    if not meme_mgr:
+        return jsonify({"message": "Plugin instance not available"}), 503
+    progress = meme_mgr.get_identify_progress()
+    return jsonify(progress)
+
+
+@api_handler
+@api.route("/img_host/sync/progress", methods=["GET"])
 async def check_sync_process():
     img_sync = _get_plugin_service("img_sync")
     if not img_sync or not img_sync.sync_process:
-        return jsonify({"completed": True, "success": True})
+        # P1: 即使没有活跃进程也试读进度文件获取最后一次状态
+        return _read_progress_or_done(img_sync)
 
     if not img_sync.sync_process.is_alive():
         success = img_sync.sync_process.exitcode == 0
         img_sync.sync_process = None
-        return jsonify({"completed": True, "success": success})
+        result = _read_progress_or_done(img_sync)
+        result["completed"] = True
+        result["success"] = success
+        return jsonify(result)
 
-    return jsonify({"completed": False})
+    # P1: 进程存活中，返回进度数据
+    result = _read_progress_or_done(img_sync)
+    result["completed"] = False
+    return jsonify(result)
+
+
+def _read_progress_or_done(img_sync):
+    """P1: 读取进度文件，若不存在返回兜底数据"""
+    import json as json_mod
+    progress_file = img_sync._progress_file if img_sync else None
+    if progress_file and progress_file.exists():
+        try:
+            with open(progress_file, "r", encoding="utf-8") as f:
+                data = json_mod.load(f)
+                data["completed"] = data.get("step") == "done"
+                return data
+        except Exception:
+            pass
+    return {"completed": True, "success": True, "task": None, "current": 0, "total": 0, "step": "done"}

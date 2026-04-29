@@ -1,67 +1,45 @@
-"""P3: 多图床 Provider 自动发现注册表"""
-import importlib
-import importlib.util
-import os
+"""P3: 多图床 Provider 注册表 — 统一入口
+
+本模块是 ImageSync 的单例工厂，直接委托给 image_host/img_sync.ImageSync。
+不再需要 providers/ 目录下的 *_sync.py 中间层。
+"""
 
 from astrbot.api import logger
 
-_PROVIDER_CACHE: dict[str, type] = {}
-
-def _discover_providers():
-    """自动扫描 providers/ 目录，注册所有 Provider"""
-    global _PROVIDER_CACHE
-    import sys
-    providers_dir = os.path.join(os.path.dirname(__file__), "..", "providers")
-    plugins_dir = os.path.dirname(providers_dir)  # astrbot_plugin_meme_assistant/
-    
-    # 确保包层级在 sys.modules 中存在（stardots_sync 用相对导入需要）
-    pkg_name = "astrbot_plugin_meme_assistant"
-    if pkg_name in sys.modules and not hasattr(sys.modules[pkg_name], "__path__"):
-        sys.modules[pkg_name].__path__ = [plugins_dir]
-    
-    if not os.path.isdir(providers_dir):
-        return
-    for fname in os.listdir(providers_dir):
-        if fname.endswith("_sync.py") and fname != "__init__.py":
-            mod_name = fname[:-3]  # e.g. "stardots_sync"
-            try:
-                # 使用完整包名，让相对导入（from ..image_host...）能解析
-                full_name = f"{pkg_name}.providers.{mod_name}"
-                spec = importlib.util.spec_from_file_location(
-                    full_name,
-                    os.path.join(providers_dir, fname),
-                )
-                mod = importlib.util.module_from_spec(spec)
-                sys.modules[full_name] = mod
-                spec.loader.exec_module(mod)
-                if hasattr(mod, "ImageProvider"):
-                    provider_type = getattr(mod.ImageProvider, "PROVIDER_TYPE", mod_name.replace("_sync", ""))
-                    _PROVIDER_CACHE[provider_type] = mod.ImageProvider
-                    logger.info(f"[meme_assistant] Provider registered: {provider_type}")
-            except Exception as e:
-                logger.warning(f"[meme_assistant] Skip provider {mod_name}: {e}")
-
 
 class ProviderRegistry:
-    """Provider 注册表"""
-    _discovered = False
+    """Provider 注册表 — 工厂模式创建 ImageSync 实例"""
 
-    @classmethod
-    def ensure_discovery(cls):
-        if not cls._discovered:
-            _discover_providers()
-            cls._discovered = True
+    @staticmethod
+    def create(provider_type: str, config: dict, local_dir: str):
+        """创建 ImageSync 实例
 
-    @classmethod
-    def create(cls, provider_type: str, config: dict, local_dir: str):
-        """创建 Provider 实例"""
-        cls.ensure_discovery()
-        if provider_type not in _PROVIDER_CACHE:
-            raise ValueError(f"Unknown provider type: {provider_type}. Available: {list(_PROVIDER_CACHE.keys())}")
-        provider_cls = _PROVIDER_CACHE[provider_type]
-        return provider_cls(config=config, local_dir=local_dir)
+        Args:
+            provider_type: 图床类型 (stardots / cos / oss / s3)
+            config: Provider 配置字典
+            local_dir: 本地图片目录路径
 
-    @classmethod
-    def available_providers(cls) -> list[str]:
-        cls.ensure_discovery()
-        return sorted(_PROVIDER_CACHE.keys())
+        Returns:
+            ImageSync 实例，或 None（provider_type 不支持时抛异常）
+        """
+        from ..image_host.img_sync import ImageSync
+
+        normalized = provider_type.lower().strip()
+        available = ("stardots", "cos", "oss", "s3")
+
+        if normalized not in available:
+            raise ValueError(
+                f"Unknown provider type: {provider_type}. "
+                f"Available: {list(available)}"
+            )
+
+        logger.info(f"[meme_assistant] Creating ImageSync for provider: {normalized}")
+        return ImageSync(
+            config=config,
+            local_dir=local_dir,
+            provider_type=normalized,
+        )
+
+    @staticmethod
+    def available_providers() -> list[str]:
+        return ["stardots", "cos", "oss", "s3"]

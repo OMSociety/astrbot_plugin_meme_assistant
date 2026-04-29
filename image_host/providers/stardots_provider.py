@@ -279,6 +279,8 @@ class StarDotsProvider(ImageHostInterface):
         """获取 StarDots 空间中的所有图片（分页拉取）。"""
         page = 1
         page_size = 100
+        max_consecutive_failures = 5
+        consecutive_failures = 0
         all_images: list[ImageInfo] = []
 
         while True:
@@ -327,10 +329,18 @@ class StarDotsProvider(ImageHostInterface):
                         if len(images) < page_size:
                             return all_images
 
+                        consecutive_failures = 0
                         page += 1
                         continue
                     else:
                         msg = result.get("message", "")
+                        consecutive_failures += 1
+                        if consecutive_failures > max_consecutive_failures:
+                            logger.error(
+                                "连续 %d 次获取图片列表失败，停止同步",
+                                max_consecutive_failures,
+                            )
+                            return all_images
                         if "invalid timestamp" in msg.lower():
                             time.sleep(1)
                             continue
@@ -341,15 +351,30 @@ class StarDotsProvider(ImageHostInterface):
                             "获取图片列表失败: %s",
                             result.get("message", "未知错误"),
                         )
+                        time.sleep(1)
                         continue
 
                 else:
+                    consecutive_failures += 1
+                    if consecutive_failures > max_consecutive_failures:
+                        logger.error(
+                            "连续 %d 次 HTTP 错误，停止同步",
+                            max_consecutive_failures,
+                        )
+                        return all_images
                     logger.warning("HTTP 错误: %s", response.status_code)
                     time.sleep(1)
                     continue
 
             except Exception as e:
                 logger.warning("获取远程文件列表失败: %s", e)
+                consecutive_failures += 1
+                if consecutive_failures > max_consecutive_failures:
+                    logger.error(
+                        "连续 %d 次异常，停止同步",
+                        max_consecutive_failures,
+                    )
+                    return all_images
                 if all_images:
                     return all_images
                 raise

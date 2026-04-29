@@ -23,6 +23,23 @@ from ._prompt_renderer import PromptRenderer
 
 
 class IdentifyMixin:
+    # ── P1: 识图进度状态 ──
+    _identify_progress: dict = {
+        "active": False,
+        "total": 0,
+        "completed": 0,
+        "success": 0,
+        "failed": 0,
+        "current_category": "",
+        "current_filename": "",
+        "started_at": 0.0,
+    }
+
+    def get_identify_progress(self) -> dict:
+        """返回当前识图进度快照（供 API 读取）"""
+        import copy
+        return copy.deepcopy(self._identify_progress)
+
     def _reload_personas(self):
         """重新加载表情配置并构建提示词并注入全局人格"""
         self.category_mapping = load_json(
@@ -162,17 +179,10 @@ class IdentifyMixin:
                 image_base64 = base64.b64encode(f.read()).decode("utf-8")
 
             # 构造 LLM 请求
-            prompt = """请用中文简要描述这张表情包图片的内容，包含以下维度：
-
-1. **画面描述**：画面中有什么（人物/动物/文字/物体等）
-2. **表情/情绪**：角色的表情和情绪基调
-3. **文字内容**：如果有文字，文字是什么
-4. **适用场景**：这张表情包适合在什么社交场景下使用
-
-然后给出 3-5 个中文标签（用逗号分隔）。
-
-请严格按照以下 JSON 格式回复，不要有多余内容：
-{"description": "描述文本", "tags": ["标签1", "标签2", "标签3"]}"""
+            if self.vision_identify_prompt:
+                prompt = self.vision_identify_prompt
+            else:
+                prompt = self.renderer.render_vision_identify_prompt()
 
             llm_response = await self._call_llm_vision(
                 prompt=prompt,
@@ -325,7 +335,7 @@ class IdentifyMixin:
         """
         for attempt in range(max_retries):
             try:
-                provider = self.context.provider_manager.get_provider_by_id(provider_id)
+                provider = await self.context.provider_manager.get_provider_by_id(provider_id)
                 if not provider:
                     logger.warning(f"[meme_manager] 未找到 provider: {provider_id}")
                     return None
@@ -395,14 +405,27 @@ class IdentifyMixin:
 
     async def _process_identify_tasks(self, tasks: list) -> list:
         """逐条处理识别任务，返回未完成的任务列表。锁外执行，不阻塞新任务写入。"""
+        import time as _time
+
+        self._identify_progress["active"] = True
+        self._identify_progress["total"] = len(tasks)
+        self._identify_progress["completed"] = 0
+        self._identify_progress["success"] = 0
+        self._identify_progress["failed"] = 0
+        self._identify_progress["started_at"] = _time.time()
+
         remaining = []
         for task in tasks:
             action = task.get("action", "")
             cat = task.get("category", "")
             fn = task.get("filename", "")
 
+            self._identify_progress["current_category"] = cat
+            self._identify_progress["current_filename"] = fn
+
             if self._check_identify_circuit():
                 remaining.append(task)
+                self._identify_progress["completed"] += 1
                 continue
 
             if action == "reidentify":
@@ -410,13 +433,22 @@ class IdentifyMixin:
 
             try:
                 ok = await self._identify_meme(cat, fn)
-                if not ok:
+                if ok:
+                    self._identify_progress["success"] += 1
+                else:
+                    self._identify_progress["failed"] += 1
                     remaining.append(task)
             except Exception as e:
                 logger.warning(
                     f"[meme_manager] 识别失败 {cat}/{fn}: {e}，已隔离，继续处理剩余任务"
                 )
+                self._identify_progress["failed"] += 1
                 remaining.append(task)
+            self._identify_progress["completed"] += 1
+
+        self._identify_progress["active"] = False
+        self._identify_progress["current_category"] = ""
+        self._identify_progress["current_filename"] = ""
         return remaining
 
     async def _write_remaining_tasks(self, remaining: list):

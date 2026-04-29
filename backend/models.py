@@ -2,6 +2,7 @@ import hashlib
 import logging
 import os
 import shutil
+import time
 from pathlib import Path
 
 from werkzeug.utils import secure_filename
@@ -10,6 +11,9 @@ from ..config import MEMES_DIR
 
 logger = logging.getLogger(__name__)
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+
+# ── scan_emoji_folder 缓存 ──
+_scan_cache: dict = {"data": None, "mtime": 0}
 
 
 class DuplicateEmojiError(ValueError):
@@ -34,7 +38,9 @@ def _iter_category_image_paths(category_path: Path) -> list[Path]:
     return [
         path
         for path in category_path.iterdir()
-        if path.is_file() and _is_supported_image(path.name)
+        if path.is_file()
+        and not path.name.startswith(".")
+        and _is_supported_image(path.name)
     ]
 
 
@@ -70,11 +76,22 @@ def _build_available_file_path(category_path: Path, filename: str) -> Path:
 
 
 async def scan_emoji_folder():
-    """扫描表情包文件夹，返回所有类别及其表情包"""
+    """扫描表情包文件夹，返回所有类别及其表情包（自带 mtime 缓存）"""
+    try:
+        current_mtime = os.path.getmtime(MEMES_DIR) if os.path.isdir(MEMES_DIR) else 0
+    except OSError:
+        current_mtime = 0
+
+    # 缓存命中且目录未变化，直接返回
+    if _scan_cache["data"] is not None and _scan_cache["mtime"] == current_mtime:
+        return _scan_cache["data"]
+
     emoji_data = {}
     if not os.path.exists(MEMES_DIR):
         os.makedirs(MEMES_DIR)
     for category in os.listdir(MEMES_DIR):
+        if category.startswith("."):
+            continue
         category_path = _get_category_path(category)
         if not category_path.is_dir():
             continue
@@ -82,7 +99,17 @@ async def scan_emoji_folder():
         emoji_data[category] = [
             path.name for path in _iter_category_image_paths(category_path)
         ]
+
+    # 更新缓存
+    _scan_cache["data"] = emoji_data
+    _scan_cache["mtime"] = current_mtime
     return emoji_data
+
+
+def _invalidate_scan_cache() -> None:
+    """在增/删操作后使缓存失效"""
+    _scan_cache["data"] = None
+    _scan_cache["mtime"] = 0
 
 
 def get_emoji_by_category(category):
@@ -179,6 +206,7 @@ def add_emoji_to_category(category, image_file):
             raise OSError(f"文件保存失败，{file_path} 大小为0")
 
         logger.info(f"文件成功保存到 {file_path}, 大小: {file_size} 字节")
+        _invalidate_scan_cache()
         return {"path": str(file_path), "filename": file_path.name}
 
     except Exception as e:
@@ -197,6 +225,7 @@ def add_emoji_to_category(category, image_file):
 
 def delete_emoji_from_category(category, image_file):
     """删除指定类别下的表情包"""
+    _invalidate_scan_cache()
     category_path = _get_category_path(category)
     if not category_path.is_dir():
         return False
@@ -211,6 +240,7 @@ def delete_emoji_from_category(category, image_file):
 
 def batch_delete_emojis(category: str, image_files: list[str]) -> dict[str, object]:
     """批量删除指定类别下的表情包。"""
+    _invalidate_scan_cache()
     category_path = _get_category_path(category)
     if not category_path.is_dir():
         return {
@@ -238,6 +268,7 @@ def move_emoji_to_category(
     source_category: str, image_file: str, target_category: str
 ) -> dict[str, object]:
     """将单个表情包移动到另一个类别。"""
+    _invalidate_scan_cache()
     source_category_path = _get_category_path(source_category)
     if not source_category_path.is_dir():
         return {
@@ -330,6 +361,7 @@ def copy_emoji_to_category(
     source_category: str, image_file: str, target_category: str
 ) -> dict[str, object]:
     """将单个表情包复制到另一个类别。"""
+    _invalidate_scan_cache()
     source_category_path = _get_category_path(source_category)
     if not source_category_path.is_dir():
         return {
@@ -420,6 +452,7 @@ def batch_copy_emojis(
 
 def clear_category_emojis(category: str) -> dict[str, object]:
     """清空指定类别下的所有表情包，但保留类别目录和配置。"""
+    _invalidate_scan_cache()
     category_path = _get_category_path(category)
     if not category_path.is_dir():
         return {
@@ -440,6 +473,7 @@ def clear_category_emojis(category: str) -> dict[str, object]:
 
 def clear_all_emojis() -> dict[str, object]:
     """清空所有类别中的表情包，但保留目录和配置。"""
+    _invalidate_scan_cache()
     deleted_by_category = {}
     memes_root = Path(MEMES_DIR)
     if not memes_root.exists():

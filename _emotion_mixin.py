@@ -56,10 +56,6 @@ class EmotionMixin:
     async def resp(self, event: AstrMessageEvent, response: LLMResponse):
         """处理 LLM 响应，识别表情"""
 
-        # 懒启动后台识别轮询
-        if self._identify_poll_task is None:
-            self._identify_poll_task = asyncio.ensure_future(self._auto_identify_loop())
-
         if not response or not response.completion_text:
             return
 

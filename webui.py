@@ -1,5 +1,5 @@
 import asyncio
-import asyncio
+import logging
 import os
 import secrets
 import time
@@ -19,6 +19,8 @@ from quart import (
 
 from .backend.api import api
 from .config import MEMES_DIR
+
+logger = logging.getLogger(__name__)
 
 _SERVER_START_TIME = time.time()
 
@@ -117,19 +119,22 @@ async def index():
 @app.route("/memes/<category>/<filename>")
 async def serve_emoji(category, filename):
     category_path = os.path.join(MEMES_DIR, category)
-    if os.path.exists(os.path.join(category_path, filename)):
-        return await send_from_directory(category_path, filename)
+    file_path = os.path.join(category_path, filename)
+    if os.path.exists(file_path):
+        response = await send_from_directory(category_path, filename)
+        # 强缓存 1 天，浏览器二次加载直接走 disk cache
+        response.headers["Cache-Control"] = "public, max-age=86400"
+        return response
     else:
-        return "File not found: " + os.path.join(category_path, filename), 404
+        return "File not found: " + file_path, 404
 
 
-def run_server(config):
-    asyncio.run(start_server(config))
 
 
 async def start_server(config=None):
     global WEBUI_TOKEN, _current_server
 
+    # ── 线程方式运行，无需 reset event loop policy ──
     ServerState.reset()  # 重置旧单例状态
     state = ServerState()
     state.ready.clear()
@@ -144,6 +149,7 @@ async def start_server(config=None):
         "img_sync": config.get("img_sync"),
         "category_manager": config.get("category_manager"),
         "description_manager": config.get("description_manager"),
+        "meme_manager": config.get("meme_manager"),
         "webui_port": port,
     }
 

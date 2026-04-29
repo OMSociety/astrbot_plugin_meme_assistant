@@ -4,10 +4,10 @@ Handles WebUI config init, auto-start, graceful shutdown, cleanup,
 and the ``stop_server`` admin command.
 """
 
+import asyncio
 import logging
 import os
 import secrets
-from multiprocessing import Process
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 class WebUIMixin:
     # ── called by MemeSender.__init__ ──────────────────────────
     def _init_webui_config(self):
-        self.webui_process: Process | None = None
+        self.webui_task: asyncio.Task | None = None
+        self._webui_stop_event: asyncio.Event | None = None
         self.server_port: int = self.config.get("webui_port", 5000)
         self.webui_token: str = self.config.get("webui_token", "").strip()
         if not self.webui_token:
@@ -24,14 +25,14 @@ class WebUIMixin:
 
     # ── auto-start ─────────────────────────────────────────────
     def _auto_start_webui(self):
-        """插件加载时自动启动 WebUI，启动前强制释放端口"""
-        from .webui import run_server
+        """插件加载时自动启动 WebUI（主事件循环 asyncio.create_task，参考代码执行器实现）"""
+        from .webui import start_server
 
         max_retries = 3
         last_error = None
         for attempt in range(max_retries):
             try:
-                if self.webui_process and self.webui_process.is_alive():
+                if self.webui_task and not self.webui_task.done():
                     return
                 self._kill_port_owner(self.server_port)
                 config = {
@@ -40,13 +41,10 @@ class WebUIMixin:
                     "img_sync": self.img_sync,
                     "category_manager": self.category_manager,
                     "description_manager": self.description_manager,
+                    "meme_manager": self,
                 }
-                self.webui_process = Process(
-                    target=run_server,
-                    args=(config,),
-                    daemon=True,
-                )
-                self.webui_process.start()
+                self._webui_stop_event = asyncio.Event()
+                self.webui_task = asyncio.create_task(start_server(config))
                 logger.info(
                     f"🌐 WebUI 已自动启动: http://localhost:{self.server_port}\n"
                     f"   Token: {self.webui_token}"
@@ -62,32 +60,30 @@ class WebUIMixin:
 
     # ── shutdown / cleanup ─────────────────────────────────────
     async def _shutdown_webui(self):
-        """终止 WebUI 子进程，先 SIGTERM 再 SIGKILL 兜底"""
-        if not self.webui_process:
-            return
-        self.webui_process.terminate()
-        self.webui_process.join(timeout=5)
-        if self.webui_process.is_alive():
-            logger.warning("WebUI 进程未响应 SIGTERM，发送 SIGKILL")
-            self.webui_process.kill()
-            self.webui_process.join(timeout=3)
-        logger.info("WebUI 进程已终止")
-
-    async def _cleanup_webui(self):
-        """清理 WebUI 进程引用"""
+        """终止 WebUI 任务，设置停止信号并清理引用"""
+        if self._webui_stop_event:
+            self._webui_stop_event.set()
+        if self.webui_task and not self.webui_task.done():
+            self.webui_task.cancel()
+            try:
+                await asyncio.wait_for(self.webui_task, timeout=5)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+        self.webui_task = None
+        self._webui_stop_event = None
         self.server_port = None
-        if self.webui_process:
-            if self.webui_process.is_alive():
-                self.webui_process.terminate()
-                self.webui_process.join()
-        self.webui_process = None
+        logger.info("WebUI 服务已终止")
 
     async def check_webui_health(self) -> bool:
-        """检查子进程健康状态，意外退出时自动重启"""
-        if self.webui_process is None:
+        """检查任务健康状态，意外退出时自动重启"""
+        if self.webui_task is None:
             return True
-        if not self.webui_process.is_alive():
-            logger.warning("⚠️ WebUI 子进程意外退出，自动重启中")
+        if self.webui_task.done():
+            exc = self.webui_task.exception()
+            if exc:
+                logger.warning(f"⚠️ WebUI 任务异常退出: {exc}")
+            else:
+                logger.warning("⚠️ WebUI 任务意外退出，自动重启中")
             await self._shutdown_webui()
             self._auto_start_webui()
             return False

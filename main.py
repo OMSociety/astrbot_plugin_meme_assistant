@@ -77,6 +77,9 @@ class MemeSender(
             self._ensure_default_category_descriptions
         )
 
+        # 提前启动识别轮询（不再等首次 LLM 响应）
+        self._identify_poll_task = asyncio.ensure_future(self._auto_identify_loop())
+
 
     # ── 初始化辅助方法 ──────────────────────────────
 
@@ -108,6 +111,7 @@ class MemeSender(
         self.prompt_head = prompt_cfg.get("prompt_head")
         self.prompt_tail_1 = prompt_cfg.get("prompt_tail_1")
         self.prompt_tail_2 = prompt_cfg.get("prompt_tail_2")
+        self.vision_identify_prompt = prompt_cfg.get("vision_identify_prompt", "")
 
         # 表情发送策略
         self.max_emotions_per_message = cfg.get("max_emotions_per_message")
@@ -125,7 +129,7 @@ class MemeSender(
         self.streaming_compatibility = cfg.get("streaming_compatibility", False)
         self.content_cleanup_rule = cfg.get("content_cleanup_rule", "&&[a-zA-Z]*&&")
         self.meme_identify_enabled = cfg.get("meme_identify_enabled", True)
-        self.meme_identify_provider_id = cfg.get("meme_identify_provider_id", "kimi_2.5")
+        self.meme_identify_provider_id = cfg.get("meme_identify_provider_id", "")
         self.meme_identify_on_upload = cfg.get("meme_identify_on_upload", True)
         self.meme_identify_concurrency = cfg.get("meme_identify_concurrency", 2)
         self.meme_identify_circuit_threshold = cfg.get("meme_identify_circuit_threshold", 5)
@@ -253,4 +257,3 @@ class MemeSender(
         if self.img_sync:
             self.img_sync.stop_sync()
         await self._shutdown_webui()
-        await self._cleanup_webui()
