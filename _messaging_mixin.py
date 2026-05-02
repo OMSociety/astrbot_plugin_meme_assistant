@@ -11,6 +11,7 @@ from astrbot.core.message.message_event_result import MessageChain, ResultConten
 
 
 class MessagingMixin:
+    _RE_DOUBLE_AMP = re.compile(r"&&+")
     async def _send_image_to_event(
         self, event: AstrMessageEvent, image: str | Image
     ) -> None:
@@ -126,7 +127,7 @@ class MessagingMixin:
                 final = []
                 for comp in raw:
                     if isinstance(comp, Plain):
-                        t = re.sub(r"&&+", "", comp.text)
+                        t = self._RE_DOUBLE_AMP.sub("", comp.text)
                         if t.strip():
                             final.append(Plain(t.strip()))
                     else:

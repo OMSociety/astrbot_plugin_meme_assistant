@@ -36,4 +36,4 @@ class ImageProvider:
         """全量同步（委托给 image_host/img_sync.ImageSync）"""
         from ..image_host.img_sync import ImageSync
         syncer = ImageSync(self.config, self.local_dir)
-        await syncer.sync()
+        await syncer.start_sync("sync_all")

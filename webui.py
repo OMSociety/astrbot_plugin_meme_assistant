@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import os
 import secrets
 import time
@@ -17,10 +16,10 @@ from quart import (
     url_for,
 )
 
+from astrbot.api import logger
+
 from .backend.api import api
 from .config import MEMES_DIR
-
-logger = logging.getLogger(__name__)
 
 _SERVER_START_TIME = time.time()
 

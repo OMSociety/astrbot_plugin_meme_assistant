@@ -1,11 +1,9 @@
 import fcntl
 import hashlib
 import json
-import logging
 import os
 import random
 import re
-import shutil
 import string
 import threading
 from contextlib import contextmanager
@@ -14,10 +12,8 @@ from typing import Any
 
 import aiohttp
 
-from .config import CURRENT_DIR, DEFAULT_MEMES_INIT_MARKER, MEMES_DATA_PATH, MEMES_DIR
+from astrbot.api import logger
 
-logger = logging.getLogger(__name__)
-DEFAULT_MEMES_SOURCE_DIR = Path(CURRENT_DIR) / "memes"
 _json_io_lock = threading.Lock()  # 并发保护 save_json / load_json
 
 
@@ -88,123 +84,7 @@ def _find_duplicate_file_by_content(target_dir: Path, content_hash: str) -> Path
     return None
 
 
-def get_default_meme_categories() -> list[str]:
-    """返回插件内置默认表情包类别列表。"""
-    if not DEFAULT_MEMES_SOURCE_DIR.is_dir():
-        return []
-    return sorted(
-        item.name for item in DEFAULT_MEMES_SOURCE_DIR.iterdir() if item.is_dir()
-    )
-
-
-def restore_default_memes(category: str | None = None) -> dict[str, Any]:
-    """恢复内置默认表情包到运行目录。"""
-    if not DEFAULT_MEMES_SOURCE_DIR.is_dir():
-        return {
-            "source_exists": False,
-            "available_categories": [],
-            "copied_files": {},
-            "duplicate_files": {},
-            "renamed_files": {},
-        }
-
-    available_categories = get_default_meme_categories()
-    if category is not None and category not in available_categories:
-        return {
-            "source_exists": True,
-            "available_categories": available_categories,
-            "category_exists": False,
-            "copied_files": {},
-            "duplicate_files": {},
-            "renamed_files": {},
-        }
-
-    requested_categories = [category] if category else available_categories
-    copied_files: dict[str, list[str]] = {}
-    duplicate_files: dict[str, list[str]] = {}
-    renamed_files: dict[str, list[dict[str, str]]] = {}
-
-    ensure_dir_exists(MEMES_DIR)
-
-    for category_name in requested_categories:
-        source_category_dir = DEFAULT_MEMES_SOURCE_DIR / category_name
-        if not source_category_dir.is_dir():
-            continue
-
-        target_category_dir = Path(MEMES_DIR) / category_name
-        target_category_dir.mkdir(parents=True, exist_ok=True)
-
-        for source_file in sorted(source_category_dir.iterdir()):
-            if not source_file.is_file():
-                continue
-
-            content = source_file.read_bytes()
-            content_hash = _calculate_sha256(content)
-            duplicate_file = _find_duplicate_file_by_content(
-                target_category_dir, content_hash
-            )
-            if duplicate_file is not None:
-                duplicate_files.setdefault(category_name, []).append(
-                    duplicate_file.name
-                )
-                continue
-
-            target_path = _get_available_target_path(
-                target_category_dir / source_file.name
-            )
-            shutil.copy2(source_file, target_path)
-            copied_files.setdefault(category_name, []).append(target_path.name)
-
-            if target_path.name != source_file.name:
-                renamed_files.setdefault(category_name, []).append(
-                    {"source": source_file.name, "saved": target_path.name}
-                )
-
-    return {
-        "source_exists": True,
-        "available_categories": available_categories,
-        "category_exists": True,
-        "copied_files": copied_files,
-        "duplicate_files": duplicate_files,
-        "renamed_files": renamed_files,
-    }
-
-
-def copy_default_memes_if_needed() -> bool:
-    """仅在首次初始化时复制默认表情包，后续更新不再自动补回。"""
-    ensure_dir_exists(MEMES_DIR)
-
-    marker_path = Path(DEFAULT_MEMES_INIT_MARKER)
-    if marker_path.exists():
-        return False
-
-    memes_dir = Path(MEMES_DIR)
-    has_existing_runtime_data = Path(MEMES_DATA_PATH).is_file() or any(
-        memes_dir.iterdir()
-    )
-    if has_existing_runtime_data:
-        marker_path.touch(exist_ok=True)
-        logger.info("检测到现有表情包数据，跳过自动复制默认表情包。")
-        return False
-
-    result = restore_default_memes()
-    if not result["source_exists"]:
-        logger.warning("默认表情包目录不存在: %s", DEFAULT_MEMES_SOURCE_DIR)
-        return False
-
-    marker_path.touch(exist_ok=True)
-    copied_total = sum(len(files) for files in result["copied_files"].values())
-    if copied_total > 0:
-        logger.info(
-            "已初始化默认表情包，共复制 %s 个文件到 %s", copied_total, MEMES_DIR
-        )
-        return True
-
-    logger.info("默认表情包初始化已完成，但未复制任何文件。")
-    return False
-
-
-def save_json(data: dict[str, Any], filepath: str) -> bool:
+def save_json(data: dict[str, Any], filepath: str | Path) -> bool:
     """保存 JSON 数据到文件（线程安全）"""
     try:
         ensure_dir_exists(os.path.dirname(filepath))
@@ -217,7 +97,7 @@ def save_json(data: dict[str, Any], filepath: str) -> bool:
         return False
 
 
-def load_json(filepath: str, default: dict = None) -> dict:
+def load_json(filepath: str | Path, default: dict | None = None) -> dict:
     """从文件加载 JSON 数据（线程安全）"""
     try:
         with _json_io_lock:
@@ -228,12 +108,12 @@ def load_json(filepath: str, default: dict = None) -> dict:
         return default if default is not None else {}
 
 
-def dict_to_string(dictionary):
+def dict_to_string(dictionary: dict[str, str]) -> str:
     lines = [f"{key} - {value}\n" for key, value in dictionary.items()]
     return "\n".join(lines)
 
 
-def generate_secret_key(length=8):
+def generate_secret_key(length: int = 8) -> str:
     """生成随机秘钥"""
     characters = string.ascii_letters + string.digits
     return "".join(random.choice(characters) for _ in range(length))
@@ -284,8 +164,9 @@ def compress_image_if_large(
         压缩后的临时文件 Path，调用方负责用完后删除；无需压缩返回 None
     """
     try:
-        from PIL import Image
         import tempfile
+
+        from PIL import Image
 
         file_size = file_path.stat().st_size
         if file_size <= max_size_bytes:

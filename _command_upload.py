@@ -14,7 +14,10 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import Image, Plain
 
 from ._command_manage import CommandManageMixin
-from .config import MEMES_DIR
+from .config import IMAGE_EXTENSIONS, MEMES_DIR
+
+
+_UPLOAD_TIMEOUT_SECONDS = 30
 
 
 class CommandUploadMixin(CommandManageMixin):
@@ -38,10 +41,10 @@ class CommandUploadMixin(CommandManageMixin):
         async with self._upload_lock:
             self.upload_states[user_key] = {
                 "category": category,
-                "expire_time": time.time() + 30,
+                "expire_time": time.time() + _UPLOAD_TIMEOUT_SECONDS,
             }
         yield event.plain_result(
-            f"请在30秒内发送要添加到【{category}】类别的图片（可发送多张图片）。"
+            f"请在{_UPLOAD_TIMEOUT_SECONDS}秒内发送要添加到【{category}】类别的图片（可发送多张图片）。"
         )
 
     async def _handle_upload_image_impl(self, event: AstrMessageEvent):

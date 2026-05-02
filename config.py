@@ -12,6 +12,7 @@ from astrbot.core.utils.astrbot_path import (
 PLUGIN_DIR = Path(__file__).resolve().parent
 CURRENT_DIR = str(PLUGIN_DIR)
 DEFAULT_PLUGIN_NAME = "meme_assistant"
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 
 
 def resolve_plugin_name(plugin_name: str | None = None) -> str:
@@ -105,10 +106,10 @@ MEME_IDENTIFY_QUEUE_PATH = (
     PLUGIN_DATA_DIR / "meme_identify_queue.json"
 )  # 跨进程识别任务队列
 TEMP_DIR = PLUGIN_DATA_DIR / "temp"
-DEFAULT_MEMES_INIT_MARKER = PLUGIN_DATA_DIR / ".default_memes_initialized"
 
 # 目录在 init_plugin() 中创建，不在此处产生副作用
 _initialized = False
+
 
 def _ensure_dirs():
     """惰性创建必要目录（供 init_plugin 调用）"""
@@ -118,6 +119,7 @@ def _ensure_dirs():
     os.makedirs(MEMES_DIR, exist_ok=True)
     os.makedirs(TEMP_DIR, exist_ok=True)
     _initialized = True
+
 
 # 默认的类别描述
 DEFAULT_CATEGORY_DESCRIPTIONS = {

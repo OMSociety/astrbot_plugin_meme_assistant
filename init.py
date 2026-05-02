@@ -1,30 +1,47 @@
-import logging
 import os
+
+from astrbot.api import logger
 
 from .config import (
     BASE_DATA_DIR,
     DEFAULT_CATEGORY_DESCRIPTIONS,
     MEMES_DATA_PATH,
+    MEMES_DIR,
     _ensure_dirs,
 )
-from .utils import copy_default_memes_if_needed, ensure_dir_exists, save_json
+from .utils import ensure_dir_exists, save_json
 
-logger = logging.getLogger(__name__)
+
+def _ensure_category_dirs() -> list[str]:
+    """在 MEMES_DIR 下为每个预设类别创建空文件夹。"""
+    created = []
+    for category in DEFAULT_CATEGORY_DESCRIPTIONS:
+        cat_dir = os.path.join(MEMES_DIR, category)
+        if not os.path.isdir(cat_dir):
+            os.makedirs(cat_dir, exist_ok=True)
+            created.append(category)
+    return created
 
 
 def init_plugin():
-    """初始化插件，创建必要的目录和配置文件"""
+    """初始化插件：创建数据目录与空的类别文件夹，生成必要配置文件。"""
     try:
-        # 创建必要的目录（惰性，避免 import 时副作用）
+        # 必要目录（惰性）
         _ensure_dirs()
 
-        # 创建基础数据目录
+        # 数据根目录
         ensure_dir_exists(BASE_DATA_DIR)
 
-        # 创建表情包目录
-        copy_default_memes_if_needed()
+        # 在 data/plugin_data/meme_manager/memes/ 下创建空白类别文件夹
+        created = _ensure_category_dirs()
+        if created:
+            logger.info(
+                "创建空白表情包类别目录 (%d 个): %s",
+                len(created),
+                ", ".join(created),
+            )
 
-        # 初始化 memes_data.json
+        # 初始化 memes_data.json（类别描述）
         if not os.path.exists(MEMES_DATA_PATH):
             save_json(DEFAULT_CATEGORY_DESCRIPTIONS, MEMES_DATA_PATH)
             logger.info(f"创建默认类别描述文件: {MEMES_DATA_PATH}")

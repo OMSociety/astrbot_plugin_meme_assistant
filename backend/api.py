@@ -1,8 +1,10 @@
-import logging
+import json
 import os
 from functools import wraps
 
 from quart import Blueprint, current_app, jsonify, request
+
+from astrbot.api import logger
 
 from ..config import MEME_IDENTIFY_QUEUE_PATH, MEMES_DIR
 from .models import (
@@ -20,8 +22,6 @@ from .models import (
 )
 
 api = Blueprint("api", __name__)
-
-logger = logging.getLogger(__name__)
 
 
 
@@ -284,6 +284,7 @@ async def batch_move_emoji():
     ), 200
 
 
+@api_handler
 @api.route("/emoji/batch_copy", methods=["POST"])
 async def batch_copy_emoji():
     """批量复制指定类别的表情包到另一个类别。"""
@@ -683,8 +684,6 @@ async def search_meme_descriptions():
 
 def _write_identify_queue(tasks: list[dict]) -> bool:
     """向识别队列追加任务（跨进程通信，fcntl 排他锁保护）"""
-    import json as _json
-
     queue_path = str(MEME_IDENTIFY_QUEUE_PATH)
     from ..utils import flock_exclusive
 
@@ -693,10 +692,10 @@ def _write_identify_queue(tasks: list[dict]) -> bool:
         p = MEME_IDENTIFY_QUEUE_PATH
         if p.exists():
             raw = p.read_text(encoding="utf-8") or "[]"
-            existing = _json.loads(raw)
+            existing = json.loads(raw)
         existing.extend(tasks)
         p.write_text(
-            _json.dumps(existing, ensure_ascii=False, indent=2),
+            json.dumps(existing, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     return True
@@ -857,12 +856,11 @@ async def check_sync_process():
 
 def _read_progress_or_done(img_sync):
     """P1: 读取进度文件，若不存在返回兜底数据"""
-    import json as json_mod
     progress_file = img_sync._progress_file if img_sync else None
     if progress_file and progress_file.exists():
         try:
             with open(progress_file, "r", encoding="utf-8") as f:
-                data = json_mod.load(f)
+                data = json.load(f)
                 data["completed"] = data.get("step") == "done"
                 return data
         except Exception:

@@ -5,11 +5,10 @@ and the ``stop_server`` admin command.
 """
 
 import asyncio
-import logging
 import os
 import secrets
 
-logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 
 class WebUIMixin:

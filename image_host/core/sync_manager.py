@@ -1,12 +1,11 @@
 import json
-import logging
 from pathlib import Path
+
+from astrbot.api import logger
 
 from ..interfaces.image_host import ImageHostInterface
 from .file_handler import FileHandler
 from .upload_tracker import UploadTracker
-
-logger = logging.getLogger(__name__)
 
 
 class SyncManager:

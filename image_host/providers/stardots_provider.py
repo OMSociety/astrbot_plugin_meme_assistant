@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import logging
 import random
 import string
 import threading
@@ -12,10 +11,10 @@ from typing import TypedDict
 
 import httpx
 
+from astrbot.api import logger
+
 from ..interfaces.image_host import ImageHostInterface
 from ...utils import compress_image_if_large
-
-logger = logging.getLogger(__name__)
 
 
 class StarDotsError(Exception):
@@ -221,13 +220,6 @@ class StarDotsProvider(ImageHostInterface):
                             verify=False,
                             timeout=60.0,
                         )
-                finally:
-                    # 清理临时压缩文件
-                    if tmp_compressed and tmp_compressed.exists():
-                        try:
-                            tmp_compressed.unlink()
-                        except OSError:
-                            pass
 
                     if response.status_code == 200:
                         result = response.json()
@@ -247,6 +239,13 @@ class StarDotsProvider(ImageHostInterface):
                             pass
                         logger.error("上传失败: %s", error_msg)
                         raise NetworkError(error_msg)
+                finally:
+                    # 清理临时压缩文件
+                    if tmp_compressed and tmp_compressed.exists():
+                        try:
+                            tmp_compressed.unlink()
+                        except OSError:
+                            pass
 
             except httpx.RequestError as e:
                 logger.error("网络错误: %s，重试中...", e)

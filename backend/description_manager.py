@@ -5,20 +5,19 @@
 与 category_manager.py（管理类别级描述）平行协作。
 """
 
-import logging
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+from astrbot.api import logger
 
 from ..config import MEME_DESCRIPTIONS_PATH
 from ..utils import load_json, save_json
-
-logger = logging.getLogger(__name__)
 
 # 默认空数据结构
 DEFAULT_DESCRIPTIONS = {"version": 1, "entries": {}}
 
 # CST 时区
-CST = timezone(offset=__import__("datetime").timedelta(hours=8))
+CST = timezone(offset=timedelta(hours=8))
 
 
 def _now_iso() -> str:

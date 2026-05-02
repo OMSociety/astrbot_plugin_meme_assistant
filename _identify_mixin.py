@@ -1,12 +1,12 @@
 import asyncio
+import base64
+import copy
 import json
 import os
 import re
 import time
 
 from astrbot.api import logger
-from astrbot.api.event import filter
-from astrbot.api.message_components import Image
 
 from .config import (
     DEFAULT_CATEGORY_DESCRIPTIONS,
@@ -19,25 +19,25 @@ from .utils import (
     flock_exclusive,
     load_json,
 )
-from ._prompt_renderer import PromptRenderer
 
 
 class IdentifyMixin:
-    # ── P1: 识图进度状态 ──
-    _identify_progress: dict = {
-        "active": False,
-        "total": 0,
-        "completed": 0,
-        "success": 0,
-        "failed": 0,
-        "current_category": "",
-        "current_filename": "",
-        "started_at": 0.0,
-    }
+    # ── P1: 识图进度状态（实例级，避免类级可变对象共享） ──
+
+    def _init_identify_progress(self) -> None:
+        self._identify_progress: dict = {
+            "active": False,
+            "total": 0,
+            "completed": 0,
+            "success": 0,
+            "failed": 0,
+            "current_category": "",
+            "current_filename": "",
+            "started_at": 0.0,
+        }
 
     def get_identify_progress(self) -> dict:
         """返回当前识图进度快照（供 API 读取）"""
-        import copy
         return copy.deepcopy(self._identify_progress)
 
     def _reload_personas(self):
@@ -89,7 +89,7 @@ class IdentifyMixin:
             logger.error(f"表情包根目录不存在，请检查: {MEMES_DIR}")
             return
 
-        for emotion in self.category_manager.get_descriptions().values():
+        for emotion in self.category_manager.get_descriptions().keys():
             emotion_path = os.path.join(MEMES_DIR, emotion)
             if not os.path.exists(emotion_path):
                 logger.error(
@@ -100,7 +100,7 @@ class IdentifyMixin:
             memes = [
                 f
                 for f in os.listdir(emotion_path)
-                if f.endswith((".jpg", ".png", ".gif"))
+                if f.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp"))
             ]
             if not memes:
                 logger.error(f"表情分类 {emotion} 对应的目录为空: {emotion_path}")
@@ -137,7 +137,6 @@ class IdentifyMixin:
 
         return True
 
-    @filter.on_llm_request()
     async def _identify_meme(
         self, category: str, filename: str, provider_id: str = None
     ) -> bool:
@@ -165,16 +164,12 @@ class IdentifyMixin:
             return True
 
         # 读取图片文件
-        from .config import MEMES_DIR
-
         image_path = MEMES_DIR / category / filename
         if not image_path.exists():
             logger.warning(f"[meme_manager] 图片不存在: {image_path}")
             return False
 
         try:
-            import base64
-
             with open(image_path, "rb") as f:
                 image_base64 = base64.b64encode(f.read()).decode("utf-8")
 
@@ -297,8 +292,6 @@ class IdentifyMixin:
 
         返回: {"success": n, "failed": n, "skipped": n}
         """
-        from .config import MEMES_DIR
-
         category_dir = MEMES_DIR / category
         if not category_dir.exists():
             return {"success": 0, "failed": 0, "skipped": 0}
@@ -366,8 +359,6 @@ class IdentifyMixin:
 
     async def _auto_identify_loop(self):
         """后台轮询识别队列（跨进程通信）。"""
-        import json as _json
-
         logger.info("🔍 识别队列轮询已启动")
         while True:
             try:
@@ -389,8 +380,6 @@ class IdentifyMixin:
 
     async def _read_identify_queue(self) -> list | None:
         """读取并清空队列文件，返回任务列表。无任务返回 None。"""
-        import json as _json
-
         async with self._queue_lock:
             if not MEME_IDENTIFY_QUEUE_PATH.exists():
                 return None
@@ -398,21 +387,19 @@ class IdentifyMixin:
             queue_path = str(MEME_IDENTIFY_QUEUE_PATH)
             with flock_exclusive(queue_path):
                 content = MEME_IDENTIFY_QUEUE_PATH.read_text(encoding="utf-8").strip()
-                tasks = _json.loads(content) if content else []
+                tasks = json.loads(content) if content else []
                 MEME_IDENTIFY_QUEUE_PATH.write_text("", encoding="utf-8")
 
         return tasks if tasks else None
 
     async def _process_identify_tasks(self, tasks: list) -> list:
         """逐条处理识别任务，返回未完成的任务列表。锁外执行，不阻塞新任务写入。"""
-        import time as _time
-
         self._identify_progress["active"] = True
         self._identify_progress["total"] = len(tasks)
         self._identify_progress["completed"] = 0
         self._identify_progress["success"] = 0
         self._identify_progress["failed"] = 0
-        self._identify_progress["started_at"] = _time.time()
+        self._identify_progress["started_at"] = time.time()
 
         remaining = []
         for task in tasks:
@@ -453,8 +440,6 @@ class IdentifyMixin:
 
     async def _write_remaining_tasks(self, remaining: list):
         """将未完成任务写回队列文件，合并期间新到达的任务。"""
-        import json as _json
-
         async with self._queue_lock:
             merged = list(remaining)
             queue_path = str(MEME_IDENTIFY_QUEUE_PATH)
@@ -463,17 +448,17 @@ class IdentifyMixin:
                     new_content = MEME_IDENTIFY_QUEUE_PATH.read_text(encoding="utf-8").strip()
                     if new_content:
                         try:
-                            new_tasks = _json.loads(new_content)
+                            new_tasks = json.loads(new_content)
                             if new_tasks:
                                 merged = new_tasks + remaining
-                        except _json.JSONDecodeError:
+                        except json.JSONDecodeError:
                             logger.warning(
                                 "[meme_manager] 队列文件 JSON 解析失败，仅保留未完成任务"
                             )
 
                 if merged:
                     MEME_IDENTIFY_QUEUE_PATH.write_text(
-                        _json.dumps(merged, ensure_ascii=False, indent=2),
+                        json.dumps(merged, ensure_ascii=False, indent=2),
                         encoding="utf-8",
                     )
                 else:

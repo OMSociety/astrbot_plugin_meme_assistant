@@ -1,4 +1,3 @@
-import asyncio
 import json
 import os
 import random
@@ -10,17 +9,32 @@ from PIL import Image as PILImage
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.message_components import Image
 from astrbot.api.provider import LLMResponse
 
 from .config import (
+    IMAGE_EXTENSIONS,
     MEMES_DIR,
 )
-from ._prompt_renderer import PromptRenderer
-from ._meme_recommender import MemeRecommender
+
+_MEMES_CACHE_TTL = 60  # 秒
 
 
 class EmotionMixin:
+    # 预编译正则（避免每次调用 re.compile）
+    _RE_THINKING = re.compile(
+        r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE
+    )
+    _RE_HEX_EMOTION = re.compile(r"&&([^&&]+)&&")
+    _RE_CHINESE = re.compile(r"[一-鿿]")
+    _RE_DIGIT_BRACKET = re.compile(r"\[\d+\]")
+    _RE_ENG_BEFORE = re.compile(r"[a-zA-Z]\s+$")
+    _RE_ENG_AFTER = re.compile(r"^\s+[a-zA-Z]")
+    _RE_BRACKET_EMOTION = re.compile(r"\[([^\[\]]+)\]")
+    _RE_PAREN_EMOTION = re.compile(r"\(([^()]+)\)")
+    _RE_JSON_BLOCK = re.compile(r"\{[\s\S]*\}")
+    _RE_DOUBLE_AMP = re.compile(r"&&+")
+    _PUNCTUATION = frozenset(" \t\n.,!?;:'\"()[]{}。，！？、；：''（）【】")
+
     def _is_position_in_thinking_tags(self, text: str, position: int) -> bool:
         """检查指定位置是否在thinking标签内
 
@@ -31,12 +45,7 @@ class EmotionMixin:
         Returns:
             True如果位置在thinking标签内，False否则
         """
-        # 找到所有thinking标签的开始和结束位置
-        thinking_pattern = re.compile(
-            r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE
-        )
-
-        for match in thinking_pattern.finditer(text):
+        for match in self._RE_THINKING.finditer(text):
             if match.start() <= position < match.end():
                 return True
         return False
@@ -79,8 +88,7 @@ class EmotionMixin:
     def _phase_strict_matching(self, text: str) -> str:
         """第一阶段：严格匹配 &&emotion&& 符号包裹的表情"""
         valid_emoticons = set(self.category_mapping.keys())
-        hex_pattern = r"&&([^&&]+)&&"
-        matches = re.finditer(hex_pattern, text)
+        matches = self._RE_HEX_EMOTION.finditer(text)
 
         temp_replacements = []
         for match in matches:
@@ -109,8 +117,7 @@ class EmotionMixin:
         clean_text = text
 
         # [emotion] 格式
-        bracket_pattern = r"\[([^\[\]]+)\]"
-        matches = re.finditer(bracket_pattern, clean_text)
+        matches = self._RE_BRACKET_EMOTION.finditer(clean_text)
         bracket_replacements = []
         invalid_brackets = [] if remove_invalid else None
 
@@ -131,8 +138,7 @@ class EmotionMixin:
             self.found_emotions.append(emotion)
 
         # (emotion) 格式
-        paren_pattern = r"\(([^()]+)\)"
-        matches = re.finditer(paren_pattern, clean_text)
+        matches = self._RE_PAREN_EMOTION.finditer(clean_text)
         paren_replacements = []
         invalid_parens = [] if remove_invalid else None
 
@@ -194,24 +200,29 @@ class EmotionMixin:
             return text
 
         valid_emoticons = set(self.category_mapping.keys())
-        clean_text = text
         loose_emotions = []
 
+        # 先收集所有匹配（position, word），避免修改文本后 position 失效
+        matches: list[tuple[int, str]] = []
         for emotion in valid_emoticons:
             pattern = r"\b(" + re.escape(emotion) + r")\b"
-            for match in re.finditer(pattern, clean_text):
+            for match in re.finditer(pattern, text):
                 word = match.group(1)
                 position = match.start()
 
-                if self._is_position_in_thinking_tags(clean_text, position):
+                if self._is_position_in_thinking_tags(text, position):
                     continue
 
-                if self._is_likely_emotion(word, clean_text, position, valid_emoticons):
-                    self.found_emotions.append(word)
-                    loose_emotions.append(word)
-                    clean_text = (
-                        clean_text[:position] + clean_text[position + len(word) :]
-                    )
+                if self._is_likely_emotion(word, text, position, valid_emoticons):
+                    matches.append((position, word))
+
+        # 按 position 降序排列，从右往左移除，避免位置偏移
+        matches.sort(key=lambda x: x[0], reverse=True)
+        clean_text = text
+        for position, word in matches:
+            self.found_emotions.append(word)
+            loose_emotions.append(word)
+            clean_text = clean_text[:position] + clean_text[position + len(word) :]
 
         logger.debug(f"[meme_manager] 松散匹配阶段找到的表情: {loose_emotions}")
         return clean_text
@@ -240,7 +251,7 @@ class EmotionMixin:
                     try:
                         data = json.loads(raw_text)
                     except Exception:
-                        match = re.search(r"\{[\s\S]*\}", raw_text)
+                        match = self._RE_JSON_BLOCK.search(raw_text)
                         if match:
                             try:
                                 data = json.loads(match.group(0))
@@ -271,7 +282,7 @@ class EmotionMixin:
         self.found_emotions = filtered
         logger.info(f"[meme_manager] 去重后的最终表情列表: {self.found_emotions}")
 
-        clean_text = re.sub(r"&&+", "", clean_text)
+        clean_text = self._RE_DOUBLE_AMP.sub("", clean_text)
         response.completion_text = clean_text.strip()
         logger.debug(
             f"[meme_manager] 清理后的最终文本内容长度: {len(response.completion_text)}"
@@ -285,71 +296,60 @@ class EmotionMixin:
 
         # 如果是在中文上下文中，更可能是表情
         has_chinese_before = bool(
-            re.search(r"[\u4e00-\u9fff]", before_text[-1:] if before_text else "")
+            self._RE_CHINESE.search(before_text[-1:] if before_text else "")
         )
         has_chinese_after = bool(
-            re.search(r"[\u4e00-\u9fff]", after_text[:1] if after_text else "")
+            self._RE_CHINESE.search(after_text[:1] if after_text else "")
         )
         if has_chinese_before or has_chinese_after:
             return True
 
-        # 如果在数字标记中，可能是引用标记如[1]，不是表情
-        if re.match(r"\[\d+\]", markup):
+        if self._RE_DIGIT_BRACKET.match(markup):
             return False
 
         # 如果标记内有空格，可能是普通句子，不是表情
         if " " in markup[1:-1]:
             return False
 
-        # 如果标记前后是完整的英文句子，可能不是表情
-        english_context_before = bool(re.search(r"[a-zA-Z]\s+$", before_text))
-        english_context_after = bool(re.search(r"^\s+[a-zA-Z]", after_text))
+        english_context_before = bool(self._RE_ENG_BEFORE.search(before_text))
+        english_context_after = bool(self._RE_ENG_AFTER.search(after_text))
         if english_context_before and english_context_after:
             return False
 
-        # 默认情况下认为可能是表情
         return True
 
     def _is_likely_emotion(self, word, text, position, valid_emotions):
         """判断一个单词是否可能是表情而非普通英文单词"""
-
-        # 先获取上下文
         before_text = text[:position].strip()
         after_text = text[position + len(word) :].strip()
 
-        # 规则1：检查是否在英文上下文中
-        # 如果前面有英文单词+空格，或后面有空格+英文单词，可能是英文上下文
-        english_context_before = bool(re.search(r"[a-zA-Z]\s+$", before_text))
-        english_context_after = bool(re.search(r"^\s+[a-zA-Z]", after_text))
+        english_context_before = bool(self._RE_ENG_BEFORE.search(before_text))
+        english_context_after = bool(self._RE_ENG_AFTER.search(after_text))
 
-        # 在英文上下文中，不太可能是表情
         if english_context_before or english_context_after:
             return False
 
         # 规则2：前后有中文字符，更可能是表情
         has_chinese_before = bool(
-            re.search(r"[\u4e00-\u9fff]", before_text[-1:] if before_text else "")
+            self._RE_CHINESE.search(before_text[-1:] if before_text else "")
         )
         has_chinese_after = bool(
-            re.search(r"[\u4e00-\u9fff]", after_text[:1] if after_text else "")
+            self._RE_CHINESE.search(after_text[:1] if after_text else "")
         )
 
         if has_chinese_before or has_chinese_after:
             return True
 
-        # 规则3：如果是句子开头或结尾，可能是表情
         if not before_text or before_text.endswith(
             ("。", "，", "！", "？", ".", ",", ":", ";", "!", "?", "\n")
         ):
             return True
 
-        # 规则4：如果前后都是标点或空格，可能是表情
-        if (not before_text or before_text[-1] in " \t\n.,!?;:'\"()[]{}") and (
-            not after_text or after_text[0] in " \t\n.,!?;:'\"()[]{}"
+        if (not before_text or before_text[-1] in self._PUNCTUATION) and (
+            not after_text or after_text[0] in self._PUNCTUATION
         ):
             return True
 
-        # 规则5：如果是已知的表情占比很高(>=70%)的单词，即使在英文上下文中也可能是表情
         if word in self.config.get("high_confidence_emotions", []):
             return True
 
@@ -406,7 +406,7 @@ class EmotionMixin:
         cache_key = f"memes_list_{category}"
         now = time.time()
         entry = self._memes_cache.get(cache_key)
-        if entry and (now - entry[1]) < 60:
+        if entry and (now - entry[1]) < _MEMES_CACHE_TTL:
             return entry[0]
 
         emotion_path = os.path.join(MEMES_DIR, category)
@@ -415,9 +415,7 @@ class EmotionMixin:
             return []
 
         memes = [
-            f
-            for f in os.listdir(emotion_path)
-            if f.lower().endswith((".jpg", ".png", ".gif", ".webp"))
+            f for f in os.listdir(emotion_path) if f.lower().endswith(IMAGE_EXTENSIONS)
         ]
         self._memes_cache[cache_key] = (memes, now)
         return memes
@@ -468,6 +466,36 @@ class EmotionMixin:
                     os.remove(final_path)
                 except Exception:
                     pass
+
+    async def _send_meme_by_category(self, category: str) -> str:
+        """通过 context.send_message 发送表情（不依赖 event）。
+
+        用于 LLM 工具或直接调用场景，无需 AstrMessageEvent。
+        """
+        if not self.meme_llm_tool_enabled:
+            return "send_meme 工具未启用"
+
+        if category not in self.category_mapping:
+            available = "、".join(list(self.category_mapping.keys())[:15])
+            return f"表情类别「{category}」不存在。可用类别示例：{available}"
+
+        meme_name, final_path, is_temp = self._select_meme_for_category(category)
+        if not final_path:
+            return f"表情类别「{category}」暂无表情包图片，请先上传。"
+
+        try:
+            # 通过 context.send_message 发送——适用于 event 不可用的场景
+            from astrbot.api.message_components import Image as MsgImage
+            from astrbot.core.message.message_event_result import MessageChain
+
+            img = MsgImage.fromFileSystem(final_path)
+            scene = self.context.get_current_scene()  # type: ignore[attr-defined]
+            if scene:
+                await self.context.send_message(scene, MessageChain([img]))
+            return f"已成功发送一张「{category}」表情包 ({meme_name})。"
+        except Exception as e:
+            logger.error(f"[meme_manager] 直接发送表情失败: {e}")
+            return f"表情类别「{category}」的表情包 ({meme_name}) 发送失败。"
 
     @filter.llm_tool(name="send_meme")
     async def send_meme_tool(self, event: AstrMessageEvent, category: str) -> str:

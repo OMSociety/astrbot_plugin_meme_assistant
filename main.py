@@ -41,6 +41,7 @@ class MemeSender(
         if not init_plugin():
             raise RuntimeError("插件初始化失败")
 
+        self._init_identify_progress()
         self.category_manager = CategoryManager()
         self.description_manager = DescriptionManager()
         self.img_sync = self._init_img_sync()
@@ -73,9 +74,12 @@ class MemeSender(
         self._reload_personas()
 
         self._auto_start_webui()
-        self.meme_manager.command("查看图库")(
-            self._ensure_default_category_descriptions
-        )
+
+        @self.meme_manager.command("查看图库")
+        async def list_categories(self, event: AstrMessageEvent):
+            """查看所有可用表情包类别"""
+            async for msg in self._list_emotions_impl(event):
+                yield msg
 
         # 提前启动识别轮询（不再等首次 LLM 响应）
         self._identify_poll_task = asyncio.ensure_future(self._auto_identify_loop())
@@ -252,8 +256,9 @@ class MemeSender(
 
     async def terminate(self):
         personas = self.context.provider_manager.personas
-        for persona, persona_backup in zip(personas, self.persona_backup):
-            persona["prompt"] = persona_backup["prompt"]
+        for persona, persona_backup in zip_longest(personas, self.persona_backup):
+            if persona is not None and persona_backup is not None:
+                persona["prompt"] = persona_backup["prompt"]
         if self.img_sync:
             self.img_sync.stop_sync()
         await self._shutdown_webui()

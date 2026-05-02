@@ -1,6 +1,5 @@
 """管理命令 Mixin — 表情包增删改查及统计命令 + 命令辅助基类。"""
 
-import asyncio
 import os
 
 from astrbot.api import logger
@@ -16,8 +15,7 @@ from .backend.models import (
     clear_category_emojis,
     get_emoji_by_category,
 )
-from .config import MEMES_DIR
-from .utils import get_default_meme_categories, restore_default_memes
+from .config import IMAGE_EXTENSIONS, MEMES_DIR
 
 
 class CommandManageMixin:
@@ -95,7 +93,6 @@ class CommandManageMixin:
             lines.append(f"- 其余 {len(non_empty_items) - limit} 个类型已省略")
         return "\n".join(lines)
 
-
     async def _stop_server_impl(self, event: AstrMessageEvent):
         """关闭表情包管理服务器。"""
         try:
@@ -120,82 +117,10 @@ class CommandManageMixin:
     async def _restore_default_memes_impl(
         self, event: AstrMessageEvent, category: str = None
     ):
-        """恢复内置默认表情包，可指定类别或恢复全部。"""
-        available_default_categories = get_default_meme_categories()
-        if not available_default_categories:
-            yield event.plain_result("❌ 未找到插件内置默认表情包资源。")
-            return
-
-        normalized_category = category.strip() if category else None
-        if (
-            normalized_category
-            and normalized_category not in available_default_categories
-        ):
-            category_list = "\n".join(
-                f"- {name}" for name in available_default_categories
-            )
-            yield event.plain_result(
-                f'⚠️ 默认表情包中不存在类别"{normalized_category}"。\n'
-                f"当前可恢复的默认类别如下：\n{category_list}"
-            )
-            return
-
-        restore_result = restore_default_memes(normalized_category)
-        if not restore_result["source_exists"]:
-            yield event.plain_result("❌ 未找到插件内置默认表情包资源。")
-            return
-
-        copied_files = restore_result["copied_files"]
-        duplicate_files = restore_result["duplicate_files"]
-        renamed_files = restore_result["renamed_files"]
-        restored_categories = sorted(
-            set(copied_files) | set(duplicate_files) | set(renamed_files)
-        )
-
-        if restored_categories:
-            self._ensure_default_category_descriptions(restored_categories)
-
-        copied_count = sum(len(files) for files in copied_files.values())
-        duplicate_count = sum(len(files) for files in duplicate_files.values())
-        renamed_count = sum(len(files) for files in renamed_files.values())
-
-        # 恢复默认表情包后后台异步识别
-        all_new_files: list[tuple[str, str]] = []
-        for cat, fns in copied_files.items():
-            all_new_files.extend((cat, fn) for fn in fns)
-        for cat, fns in renamed_files.items():
-            all_new_files.extend((cat, fn) for fn in fns)
-        if all_new_files and self.meme_identify_enabled:
-            asyncio.ensure_future(
-                self._identify_meme_batch(
-                    all_new_files, provider_id=self.meme_identify_provider_id
-                )
-            )
-
-        if copied_count == 0 and duplicate_count > 0:
-            yield event.plain_result(
-                "ℹ️ 默认表情包已存在，本次未新增文件。"
-                if not normalized_category
-                else f'ℹ️ 类别"{normalized_category}"的默认表情包已存在，本次未新增文件。'
-            )
-            return
-
-        if copied_count == 0:
-            yield event.plain_result("ℹ️ 本次没有恢复任何默认表情包文件。")
-            return
-
-        if normalized_category:
-            yield event.plain_result(
-                f'✅ 已恢复类别"{normalized_category}"的默认表情包，共新增 {copied_count} 个文件'
-                f"{f'，其中 {renamed_count} 个因重名自动补序号' if renamed_count > 0 else ''}"
-                f"{f'，跳过 {duplicate_count} 个重复文件' if duplicate_count > 0 else ''}。"
-            )
-            return
-
+        """恢复默认表情包功能已移除 — 插件不再内置默认表情包资源。"""
         yield event.plain_result(
-            f"✅ 已恢复全部默认表情包，共新增 {copied_count} 个文件，涉及 {len(copied_files)} 个类别"
-            f"{f'，其中 {renamed_count} 个因重名自动补序号' if renamed_count > 0 else ''}"
-            f"{f'，跳过 {duplicate_count} 个重复文件' if duplicate_count > 0 else ''}。"
+            "ℹ️ 插件不再内置默认表情包资源。\n"
+            "请使用 /表情管理 添加表情 [类别名称] 自行上传表情包。"
         )
 
     async def _clear_category_impl(self, event: AstrMessageEvent, category: str = None):
@@ -400,13 +325,17 @@ class CommandManageMixin:
             if self.img_sync:
                 result.append("")
                 result.append("☁️ 云端图库统计:")
-                cloud_lines, remote_total, remote_stats = self._build_cloud_stats_section()
+                cloud_lines, remote_total, remote_stats = (
+                    self._build_cloud_stats_section()
+                )
                 result.extend(cloud_lines)
                 result.append("")
                 result.append("📈 本地与云端对比:")
-                result.extend(self._build_comparison_section(
-                    local_total, remote_total, local_stats, remote_stats
-                ))
+                result.extend(
+                    self._build_comparison_section(
+                        local_total, remote_total, local_stats, remote_stats
+                    )
+                )
             else:
                 result.append("")
                 result.append("☁️ 云端图库: 未配置")
@@ -416,7 +345,6 @@ class CommandManageMixin:
         except Exception as e:
             logger.error(f"获取图库统计失败: {str(e)}")
             yield event.plain_result(f"获取图库统计失败: {str(e)}")
-
 
     # ── 图库统计辅助方法 ──────────────────────────────
 
@@ -429,8 +357,7 @@ class CommandManageMixin:
             for category in os.listdir(MEMES_DIR):
                 cp = os.path.join(MEMES_DIR, category)
                 if os.path.isdir(cp):
-                    images = [f for f in os.listdir(cp)
-                              if f.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp"))]
+                    images = [f for f in os.listdir(cp) if f.endswith(IMAGE_EXTENSIONS)]
                     if images:
                         local_stats[category] = len(images)
                         local_total += len(images)
@@ -440,9 +367,12 @@ class CommandManageMixin:
     def _build_local_stats_section(local_stats: dict, local_total: int) -> list:
         if not local_stats:
             return ["  • 本地图库为空"]
-        lines = [f"  • 总文件数: {local_total} 个",
-                 f"  • 分类数: {len(local_stats)} 个", "",
-                 "📂 本地分类详情:"]
+        lines = [
+            f"  • 总文件数: {local_total} 个",
+            f"  • 分类数: {len(local_stats)} 个",
+            "",
+            "📂 本地分类详情:",
+        ]
         for cat, count in sorted(local_stats.items(), key=lambda x: x[1], reverse=True):
             lines.append(f"  • {cat}: {count} 个")
         return lines
@@ -457,18 +387,24 @@ class CommandManageMixin:
                 cat = img.get("category", "未分类")
                 remote_stats[cat] = remote_stats.get(cat, 0) + 1
 
-            lines = [f"  • 总文件数: {remote_total} 个",
-                     f"  • 分类数: {len(remote_stats)} 个", "",
-                     "📂 云端分类详情:"]
-            for cat, count in sorted(remote_stats.items(), key=lambda x: x[1], reverse=True):
+            lines = [
+                f"  • 总文件数: {remote_total} 个",
+                f"  • 分类数: {len(remote_stats)} 个",
+                "",
+                "📂 云端分类详情:",
+            ]
+            for cat, count in sorted(
+                remote_stats.items(), key=lambda x: x[1], reverse=True
+            ):
                 lines.append(f"  • {cat}: {count} 个")
             return lines, remote_total, remote_stats
         except Exception as e:
             return [f"  • 获取云端统计失败: {str(e)}"], 0, {}
 
     @staticmethod
-    def _build_comparison_section(local_total: int, remote_total: int,
-                                  local_stats: dict, remote_stats: dict) -> list:
+    def _build_comparison_section(
+        local_total: int, remote_total: int, local_stats: dict, remote_stats: dict
+    ) -> list:
         """构建本地 vs 云端对比段落。"""
         lines = [
             f"  • 本地文件: {local_total} 个",

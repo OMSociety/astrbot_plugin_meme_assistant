@@ -1,14 +1,13 @@
 import asyncio
-import logging
 import multiprocessing
 import sys
 from pathlib import Path
 
+from astrbot.api import logger
+
 from .core.sync_manager import SyncManager
 from .core.upload_tracker import UploadTracker
 from .provider_registry import create_provider, discover_providers
-
-logger = logging.getLogger(__name__)
 
 
 class ImageSync:

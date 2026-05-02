@@ -1,16 +1,13 @@
 import hashlib
-import logging
 import os
 import shutil
-import time
 from pathlib import Path
 
 from werkzeug.utils import secure_filename
 
-from ..config import MEMES_DIR
+from astrbot.api import logger
 
-logger = logging.getLogger(__name__)
-IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+from ..config import IMAGE_EXTENSIONS, MEMES_DIR
 
 # ── scan_emoji_folder 缓存 ──
 _scan_cache: dict = {"data": None, "mtime": 0}
