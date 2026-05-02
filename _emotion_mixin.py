@@ -522,3 +522,49 @@ class EmotionMixin:
         if success:
             return f"已成功发送一张「{category}」表情包 ({meme_name})。"
         return f"表情类别「{category}」的表情包 ({meme_name}) 发送失败。"
+
+    @filter.llm_tool(name="search_meme")
+    async def search_meme_tool(self, event: AstrMessageEvent, query: str) -> str:
+        """LLM 工具：按关键词搜索表情包描述并发送最佳匹配。
+
+        当你需要发送特定主题的表情包（而非通用情绪类别）时调用此工具。
+        例如用户说「发个芙兰表情包」→ search_meme(query="芙兰")。
+
+        Args:
+            query (str): 搜索关键词，如「芙兰」「柯基」「猫猫」等
+
+        Returns:
+            str: 搜索结果描述字符串
+        """
+        if not self.meme_llm_tool_enabled:
+            return "search_meme 工具未启用"
+
+        query = query.strip()
+        if not query:
+            return "请提供搜索关键词"
+
+        # 搜索描述库
+        results = self.description_manager.search(query, limit=5)
+        if not results:
+            return f"未找到与「{query}」相关的表情包，请先使用 /表情识别 命令让 LLM 识别图库。"
+
+        # 取最佳匹配，尝试发送
+        best = results[0]
+        cat = best["category"]
+        fn = best["filename"]
+        path = os.path.join(MEMES_DIR, cat, fn)
+
+        if not os.path.exists(path):
+            return f"找到匹配「{query}」→ {cat}/{fn}，但图片文件不存在。"
+
+        try:
+            await self._send_image_to_event(event, path)
+            score = best.get("score", 0)
+            desc = best.get("description", "")[:40]
+            return (
+                f"已发送「{query}」最佳匹配表情包 ({cat}/{fn}，匹配度 {score:.1f})\n"
+                f"描述：{desc}..."
+            )
+        except Exception as e:
+            logger.error(f"[meme_manager] search_meme 发送失败: {e}")
+            return f"搜索到「{query}」匹配 ({cat}/{fn})，但发送失败。"

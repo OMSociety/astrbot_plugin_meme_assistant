@@ -1,12 +1,17 @@
 {# Meme Tool 提示模板 #}
 [Meme Sender 表情推荐系统]
-你可以调用 send_meme 工具发送表情包图片。
-参数 category 为表情类别名称（字符串）。
-当前可用类别：
+你有两个表情发送工具：
+
+1. send_meme(category) — 按类别发送
+   用于通用情绪场景。category 为表情类别名称（字符串）。
+   当前可用类别：
 {% for cat in categories[:20] -%}
-  • {{ cat }}
+     • {{ cat }}
 {% endfor -%}
 {% if categories|length > 20 %}
-…以及另外 {{ categories|length - 20 }} 个类别（太长了不列完~）
+   …以及另外 {{ categories|length - 20 }} 个类别
 {% endif %}
-当用户要求发表情包或表达情绪时，请优先调用此工具。
+
+2. search_meme(query) — 按关键词搜索描述后发送
+   用于特定主题（如「发个芙兰表情包」）。query 为中文关键词。
+   后台会根据 LLM 识别过的图片描述进行模糊匹配，自动发送最佳结果。
