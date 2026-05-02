@@ -69,7 +69,7 @@ def _copy_directory_contents(source_dir: Path, target_dir: Path) -> None:
 
 
 def migrate_legacy_data_dir_if_needed(plugin_data_dir: Path) -> None:
-    """将旧版 data/memes_data 安全迁移到 data/plugin_data/meme_manager。"""
+    """将旧版 data/memes_data 安全迁移到插件数据目录。"""
     legacy_data_dir = get_legacy_plugin_data_dir()
     if legacy_data_dir is None or not legacy_data_dir.exists():
         return

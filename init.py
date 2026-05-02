@@ -32,7 +32,7 @@ def init_plugin():
         # 数据根目录
         ensure_dir_exists(BASE_DATA_DIR)
 
-        # 在 data/plugin_data/meme_manager/memes/ 下创建空白类别文件夹
+        # 在插件数据目录下创建空白类别文件夹
         created = _ensure_category_dirs()
         if created:
             logger.info(
