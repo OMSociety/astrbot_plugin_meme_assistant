@@ -501,6 +501,8 @@ class EmotionMixin:
     async def send_meme_tool(self, event: AstrMessageEvent, category: str) -> str:
         """LLM 工具：发送指定类别的表情包图片。
 
+        如果类别不存在，自动 fallback 到 search_meme 按关键词搜索。
+
         Args:
             category (str): 表情类别名称，如 happy、cute、angry 等
 
@@ -512,8 +514,8 @@ class EmotionMixin:
 
         # 验证类别
         if category not in self.category_mapping:
-            available = "、".join(list(self.category_mapping.keys())[:15])
-            return f"表情类别「{category}」不存在。可用类别示例：{available}"
+            # 类别不存在 → fallback 到搜索
+            return await self._search_meme_fallback(event, category)
 
         # Pipeline: 选择→发送→清理
         meme_name, success = await self._send_emotion(event, category)
@@ -522,6 +524,32 @@ class EmotionMixin:
         if success:
             return f"已成功发送一张「{category}」表情包 ({meme_name})。"
         return f"表情类别「{category}」的表情包 ({meme_name}) 发送失败。"
+
+    async def _search_meme_fallback(self, event: AstrMessageEvent, query: str) -> str:
+        """send_meme 的搜索回退逻辑——按关键词搜描述并发送最佳匹配。"""
+        results = self.description_manager.search(query, limit=5)
+        if not results:
+            available = "、".join(list(self.category_mapping.keys())[:15])
+            return (
+                f"表情类别「{query}」不存在，且未搜到相关描述。\n"
+                f"可用类别示例：{available}"
+            )
+
+        best = results[0]
+        cat = best["category"]
+        fn = best["filename"]
+        path = os.path.join(MEMES_DIR, cat, fn)
+
+        if not os.path.exists(path):
+            return f"找到匹配「{query}」→ {cat}/{fn}，但图片文件不存在。"
+
+        try:
+            await self._send_image_to_event(event, path)
+            score = best.get("score", 0)
+            return f"已发送「{query}」最佳匹配表情包 ({cat}/{fn}，匹配度 {score:.1f})"
+        except Exception as e:
+            logger.error(f"[meme_manager] send_meme fallback 发送失败: {e}")
+            return f"搜索到「{query}」匹配 ({cat}/{fn})，但发送失败。"
 
     @filter.llm_tool(name="search_meme")
     async def search_meme_tool(self, event: AstrMessageEvent, query: str) -> str:
