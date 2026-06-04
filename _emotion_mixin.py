@@ -505,7 +505,6 @@ class EmotionMixin:
                 except Exception:
                     pass
 
-    @filter.llm_tool(name="send_meme")
     async def send_meme_tool(self, event: AstrMessageEvent, category: str) -> str:
         """LLM 工具：发送指定类别的表情包图片。
 
@@ -559,7 +558,6 @@ class EmotionMixin:
             logger.error(f"[meme_manager] send_meme fallback 发送失败: {e}")
             return f"搜索到「{query}」匹配 ({cat}/{fn})，但发送失败。"
 
-    @filter.llm_tool(name="search_meme")
     async def search_meme_tool(self, event: AstrMessageEvent, query: str) -> str:
         """LLM 工具：按关键词搜索表情包描述并发送最佳匹配。
 

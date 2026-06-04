@@ -1,9 +1,10 @@
 import asyncio
 import copy
 import os
+from dataclasses import dataclass, field
 from itertools import zip_longest
 
-from astrbot.api import logger
+from astrbot.api import FunctionTool, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.event.filter import EventMessageType
 from astrbot.api.star import Context, Star, register
@@ -23,6 +24,37 @@ from .init import init_plugin
 
 _PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 
+_PLUGIN_REF = None  # 模块级引用，供工具类使用
+
+
+@dataclass
+class SendMemeTool(FunctionTool):
+    name: str = "send_meme"
+    description: str = "发送指定类别的表情包图片。如果类别不存在，自动 fallback 按关键词搜索。"
+    parameters: dict = field(default_factory=lambda: {
+        "type": "object",
+        "properties": {"category": {"type": "string", "description": "表情类别名称，如 happy、cute、angry 等"}},
+    })
+
+    async def call(self, context, category: str = "") -> str:
+        event = context.context.event
+        return await _PLUGIN_REF.send_meme_tool(event, category)
+
+
+@dataclass
+class SearchMemeTool(FunctionTool):
+    name: str = "search_meme"
+    description: str = "按关键词搜索表情包描述并发送最佳匹配。"
+    parameters: dict = field(default_factory=lambda: {
+        "type": "object",
+        "properties": {"query": {"type": "string", "description": "搜索关键词，如「芙兰」「柯基」「猫猫」等"}},
+        "required": ["query"],
+    })
+
+    async def call(self, context, query: str = "") -> str:
+        event = context.context.event
+        return await _PLUGIN_REF.search_meme_tool(event, query)
+
 
 @register(
     "meme_manager", "anka", "anka - 表情包管理器 - 支持表情包发送及表情包上传", "3.20"
@@ -37,6 +69,8 @@ class MemeSender(
 ):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
+        global _PLUGIN_REF
+        _PLUGIN_REF = self
         self.config = config or {}
 
         if not init_plugin():
@@ -85,64 +119,8 @@ class MemeSender(
         # 提前启动识别轮询（不再等首次 LLM 响应）
         self._identify_poll_task = asyncio.ensure_future(self._auto_identify_loop())
 
-        # 修复 agent 调用 LLM 工具时 handler 未绑定实例的问题
-        self._patch_agent_tool_handlers()
-
-    def _patch_agent_tool_handlers(self):
-        """修复 agent 调用 LLM 工具时 handler 未绑定实例的问题。
-
-        框架的 register_llm_tool 在 agent 路径下存储的是未绑定方法，
-        导致 agent 调用 handler(event, **kwargs) 时 self 参数错位。
-        这里用 context.add_llm_tools 重新注册绑定版本，利用同名替换机制。
-        """
-        from astrbot.core.provider.func_tool_manager import FuncTool
-
-        bound_tools = [
-            FuncTool(
-                name="send_meme",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "category": {
-                            "type": "string",
-                            "description": "表情类别名称，如 happy、cute、angry 等",
-                        }
-                    },
-                },
-                description="发送指定类别的表情包图片。如果类别不存在，自动 fallback 按关键词搜索。",
-                handler=self._send_meme_tool_bound,
-            ),
-            FuncTool(
-                name="search_meme",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "搜索关键词，如「芙兰」「柯基」「猫猫」等",
-                        }
-                    },
-                },
-                description="按关键词搜索表情包描述并发送最佳匹配。",
-                handler=self._search_meme_tool_bound,
-            ),
-        ]
-        self.context.add_llm_tools(*bound_tools)
-
-    async def _send_meme_tool_bound(self, event=None, category: str = "") -> str:
-        """send_meme 绑定版"""
-        return await self._send_meme_by_category(category)
-
-    async def _search_meme_tool_bound(self, event=None, query: str = "") -> str:
-        """search_meme 绑定版"""
-        query = (query or "").strip()
-        if not query:
-            return "请提供搜索关键词"
-        results = self.description_manager.search(query, limit=5)
-        if not results:
-            return f"未找到与「{query}」相关的表情包"
-        best = results[0]
-        return await self._send_meme_by_category(best["category"])
+        # 注册 LLM 工具
+        self.context.add_llm_tools(SendMemeTool(), SearchMemeTool())
 
     # ── 初始化辅助方法 ──────────────────────────────
 
