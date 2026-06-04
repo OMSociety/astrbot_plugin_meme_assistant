@@ -74,6 +74,7 @@ pip install -r requirements.txt
 | 工具 | 说明 |
 |:----|:----|
 | `send_meme` | LLM 可主动调用，按类别发送表情包图片，不依赖文本标记 |
+| `search_meme` | LLM 可按关键词搜索表情包描述并发送最佳匹配 |
 
 ### 智能识别（v1.1.0 新增）
 
@@ -210,11 +211,17 @@ pip install -r requirements.txt
 | 工具 | 参数 | 说明 |
 |:----|:----|:----|
 | `send_meme` | `category`（类别名，如 `happy`） | 从指定类别随机发送一张表情包 |
+| `search_meme` | `query`（搜索关键词） | 按关键词搜索表情包描述并发送最佳匹配 |
 
 ### 使用示例
 ```
 用户：来个开心的表情包
 LLM 调用：send_meme(category="happy") → 发送 happy 类别中的随机表情
+```
+
+```
+用户：来个芙兰的表情包
+LLM 调用：search_meme(query="芙兰") → 搜索描述中含「芙兰」的表情并发送
 ```
 
 ```
@@ -301,12 +308,6 @@ astrbot_plugin_meme_assistant/
 │       ├── oss_provider.py
 │       ├── s3_provider.py
 │       └── provider_template.py
-├── providers/                        # 图床同步适配层
-│   ├── __init__.py
-│   ├── stardots_sync.py
-│   ├── cos_sync.py
-│   ├── oss_sync.py
-│   └── s3_sync.py
 ├── memes/                            # 默认表情包资源
 ├── static/                           # WebUI 前端资源
 │   └── js/
