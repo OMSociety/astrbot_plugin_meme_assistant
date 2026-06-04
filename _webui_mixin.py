@@ -4,6 +4,8 @@ Handles WebUI config init, auto-start, graceful shutdown, cleanup,
 and the ``stop_server`` admin command.
 """
 
+from __future__ import annotations
+
 import asyncio
 import secrets
 

@@ -1,16 +1,13 @@
+from __future__ import annotations
+
 import os
-import shutil
 import sys
 from pathlib import Path
 
-from astrbot.core.utils.astrbot_path import (
-    get_astrbot_data_path,
-    get_astrbot_plugin_data_path,
-)
+from astrbot.core.star.star_tools import StarTools
 
 # 获取当前插件目录的绝对路径
 PLUGIN_DIR = Path(__file__).resolve().parent
-CURRENT_DIR = str(PLUGIN_DIR)
 DEFAULT_PLUGIN_NAME = "meme_assistant"
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 
@@ -21,93 +18,27 @@ def resolve_plugin_name(plugin_name: str | None = None) -> str:
     return candidate.strip() or DEFAULT_PLUGIN_NAME
 
 
-def get_legacy_plugin_data_dir() -> Path | None:
-    """返回旧版插件数据目录 data/memes_data。"""
-    try:
-        return (Path(get_astrbot_data_path()) / "memes_data").resolve()
-    except Exception:
-        return None
-
-
 def get_plugin_data_dir(plugin_name: str | None = None) -> Path:
-    """返回插件数据目录，规范落在 data/plugin_data/{plugin_name}/ 下。"""
+    """返回插件数据目录，通过 StarTools 落在 AstrBot 标准 data 目录下。"""
     resolved_plugin_name = resolve_plugin_name(plugin_name)
     try:
-        plugin_data_root = Path(get_astrbot_plugin_data_path())
-        return (plugin_data_root / resolved_plugin_name).resolve()
+        return Path(StarTools.get_data_dir(resolved_plugin_name)).resolve()
     except Exception:
-        fallback_data_path = (
+        fallback = (
             PLUGIN_DIR / "data" / "plugin_data" / resolved_plugin_name
         ).resolve()
-        print(
-            f"获取 AstrBot 数据目录失败，回退到本地路径: {fallback_data_path}",
-            file=sys.stderr,
-        )
-        return fallback_data_path
-
-
-def _plugin_data_dir_has_content(plugin_data_dir: Path) -> bool:
-    """判断目标插件数据目录是否已有有效内容。"""
-    metadata_file = plugin_data_dir / "memes_data.json"
-    if metadata_file.is_file():
-        return True
-
-    memes_dir = plugin_data_dir / "memes"
-    return memes_dir.is_dir() and any(memes_dir.iterdir())
-
-
-def _copy_directory_contents(source_dir: Path, target_dir: Path) -> None:
-    """合并复制目录内容，不覆盖已存在文件。"""
-    for item in source_dir.iterdir():
-        target_path = target_dir / item.name
-        if item.is_dir():
-            shutil.copytree(item, target_path, dirs_exist_ok=True)
-            continue
-        if not target_path.exists():
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(item, target_path)
-
-
-def migrate_legacy_data_dir_if_needed(plugin_data_dir: Path) -> None:
-    """将旧版 data/memes_data 安全迁移到插件数据目录。"""
-    legacy_data_dir = get_legacy_plugin_data_dir()
-    if legacy_data_dir is None or not legacy_data_dir.exists():
-        return
-
-    if legacy_data_dir.resolve() == plugin_data_dir.resolve():
-        return
-
-    if _plugin_data_dir_has_content(plugin_data_dir):
-        return
-
-    try:
-        plugin_data_dir.mkdir(parents=True, exist_ok=True)
-        _copy_directory_contents(legacy_data_dir, plugin_data_dir)
-        print(
-            f"检测到旧版插件数据目录，已迁移到: {plugin_data_dir}",
-            file=sys.stderr,
-        )
-    except Exception as exc:
-        print(
-            f"迁移旧版插件数据目录失败: {exc}",
-            file=sys.stderr,
-        )
+        print(f"获取 AstrBot 数据目录失败，回退到本地路径: {fallback}", file=sys.stderr)
+        return fallback
 
 
 PLUGIN_DATA_DIR = get_plugin_data_dir()
-migrate_legacy_data_dir_if_needed(PLUGIN_DATA_DIR)
 BASE_DATA_DIR = PLUGIN_DATA_DIR
 MEMES_DIR = PLUGIN_DATA_DIR / "memes"
-MEMES_DATA_PATH = PLUGIN_DATA_DIR / "memes_data.json"  # 类别描述数据文件路径
-MEME_DESCRIPTIONS_PATH = (
-    PLUGIN_DATA_DIR / "meme_descriptions.json"
-)  # 逐表情 LLM 描述数据文件路径
-MEME_IDENTIFY_QUEUE_PATH = (
-    PLUGIN_DATA_DIR / "meme_identify_queue.json"
-)  # 跨进程识别任务队列
+MEMES_DATA_PATH = PLUGIN_DATA_DIR / "memes_data.json"
+MEME_DESCRIPTIONS_PATH = PLUGIN_DATA_DIR / "meme_descriptions.json"
+MEME_IDENTIFY_QUEUE_PATH = PLUGIN_DATA_DIR / "meme_identify_queue.json"
 TEMP_DIR = PLUGIN_DATA_DIR / "temp"
 
-# 目录在 init_plugin() 中创建，不在此处产生副作用
 _initialized = False
 
 

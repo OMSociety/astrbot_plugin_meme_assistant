@@ -247,5 +247,13 @@
     "default": 300,
     "hint": "熔断后等待多久再尝试恢复",
     "_advanced": true
+  },
+  "fault_tolerant_symbols": {
+    "description": "容错符号列表",
+    "type": "list",
+    "items": {"type": "string"},
+    "default": ["⬡"],
+    "hint": "LLM 误生成的非法符号，自动从回复中移除",
+    "_advanced": true
   }
 }

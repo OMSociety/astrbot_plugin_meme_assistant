@@ -1,5 +1,7 @@
 """管理命令 Mixin — 表情包增删改查及统计命令 + 命令辅助基类。"""
 
+from __future__ import annotations
+
 import os
 
 from astrbot.api import logger

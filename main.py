@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import copy
 import os
@@ -30,11 +32,20 @@ _PLUGIN_REF = None  # 模块级引用，供工具类使用
 @dataclass
 class SendMemeTool(FunctionTool):
     name: str = "send_meme"
-    description: str = "发送指定类别的表情包图片。如果类别不存在，自动 fallback 按关键词搜索。"
-    parameters: dict = field(default_factory=lambda: {
-        "type": "object",
-        "properties": {"category": {"type": "string", "description": "表情类别名称，如 happy、cute、angry 等"}},
-    })
+    description: str = (
+        "发送指定类别的表情包图片。如果类别不存在，自动 fallback 按关键词搜索。"
+    )
+    parameters: dict = field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "表情类别名称，如 happy、cute、angry 等",
+                }
+            },
+        }
+    )
 
     async def call(self, context, category: str = "") -> str:
         event = context.context.event
@@ -45,11 +56,18 @@ class SendMemeTool(FunctionTool):
 class SearchMemeTool(FunctionTool):
     name: str = "search_meme"
     description: str = "按关键词搜索表情包描述并发送最佳匹配。"
-    parameters: dict = field(default_factory=lambda: {
-        "type": "object",
-        "properties": {"query": {"type": "string", "description": "搜索关键词，如「芙兰」「柯基」「猫猫」等"}},
-        "required": ["query"],
-    })
+    parameters: dict = field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "搜索关键词，如「芙兰」「柯基」「猫猫」等",
+                }
+            },
+            "required": ["query"],
+        }
+    )
 
     async def call(self, context, query: str = "") -> str:
         event = context.context.event

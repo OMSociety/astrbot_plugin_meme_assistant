@@ -1,5 +1,7 @@
 """上传/同步命令 Mixin — 图片上传、图床同步等命令实现。"""
 
+from __future__ import annotations
+
 import asyncio
 import io
 import os

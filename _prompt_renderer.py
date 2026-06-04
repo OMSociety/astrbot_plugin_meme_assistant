@@ -6,6 +6,8 @@
     result = renderer.render("system_prompt", categories="...", max_emotions=2)
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import jinja2
