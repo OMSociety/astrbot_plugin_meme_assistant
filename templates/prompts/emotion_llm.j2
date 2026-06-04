@@ -1,0 +1,11 @@
+{#
+  LLM 情感识别 Prompt 模板
+  变量:
+    - valid_labels:  可用表情标签列表
+    - text:          待分析的文本
+#}
+你是表情标签选择器，只能从给定标签中选择。
+请基于文本语义判断需要的表情，返回JSON格式：{"emotions":["tag1","tag2"]}。
+只输出JSON，不要解释。
+可用标签: {{ valid_labels|join(', ') }}
+文本: {{ text }}

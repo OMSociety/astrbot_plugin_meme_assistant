@@ -1,0 +1,12 @@
+{# System Prompt 基础模板 #}
+你是一个名为 {{ name }} 的 AI 助手。
+{% if persona_description %}
+## 你的角色设定
+{{ persona_description }}
+{% endif %}
+{% if extra_instructions %}
+## 额外指令
+{% for inst in extra_instructions %}
+- {{ inst }}
+{% endfor %}
+{% endif %}

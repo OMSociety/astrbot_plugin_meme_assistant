@@ -1,0 +1,6 @@
+name: meme_assistant
+display_name: 表情包助手
+desc: 为 LLM 提供智能表情包发送能力，支持 AI 识别发送、WebUI 管理、云端同步、逐表情 LLM 描述存储，让 Bot 在群聊中精准、自然地使用表情包
+version: 1.1.0
+author: Slandre & Flandre
+repo: https://github.com/OMSociety/astrbot_plugin_meme_assistant

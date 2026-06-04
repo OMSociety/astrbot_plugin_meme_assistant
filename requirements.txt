@@ -1,0 +1,9 @@
+aiohttp
+httpx
+boto3
+botocore
+pillow
+quart
+hypercorn
+werkzeug
+

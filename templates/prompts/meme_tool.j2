@@ -1,0 +1,15 @@
+{#
+  LLM send_meme 工具注入 Prompt 模板
+  变量:
+    - categories:    可用类别列表
+    - demo_count:    示例展示上限（默认20）
+#}
+[Meme Sender]
+你可以调用 send_meme 工具发送表情包图片。
+参数 category 为表情类别名称（字符串）。
+{% if categories|length > demo_count -%}
+当前可用类别：{{ categories[:demo_count]|join('、') }} 等共{{ categories|length }}个类别
+{%- else -%}
+当前可用类别：{{ categories|join('、') }}
+{%- endif %}
+当用户要求发表情包或表达情绪时，请优先调用此工具。

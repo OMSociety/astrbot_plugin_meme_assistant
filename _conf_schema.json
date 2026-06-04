@@ -1,0 +1,251 @@
+{
+  "image_host": {
+    "description": "选择的图床",
+    "type": "string",
+    "hint": "请选择要使用的图床服务",
+    "default": "stardots",
+    "options": [
+      "stardots"
+    ]
+  },
+  "image_host_config": {
+    "description": "图床配置",
+    "type": "object",
+    "items": {
+      "stardots": {
+        "description": "Stardots 图床配置",
+        "type": "object",
+        "items": {
+          "key": {
+            "description": "API Key",
+            "type": "string",
+            "hint": "请输入 Stardots 的 API Key"
+          },
+          "secret": {
+            "description": "API Secret",
+            "type": "string",
+            "hint": "请输入 Stardots 的 API Secret"
+          },
+          "space": {
+            "description": "空间名称",
+            "type": "string",
+            "hint": "请输入 Stardots 的空间名称"
+          }
+        }
+      }
+    }
+  },
+  "webui_port": {
+    "description": "WebUI 管理后台端口号",
+    "type": "int",
+    "default": 5000,
+    "hint": "修改后需重启插件生效"
+  },
+  "webui_token": {
+    "description": "WebUI 登录 Token",
+    "type": "string",
+    "default": "",
+    "hint": "留空则自动生成随机Token",
+    "_advanced": true
+  },
+  "prompt": {
+    "description": "自动添加的提示词(类别描述自动插入到提示词中)",
+    "type": "object",
+    "items": {
+      "vision_identify_prompt": {
+        "description": "表情包识图提示词",
+        "type": "string",
+        "hint": "发送给视觉模型的 prompt，可自定义调整",
+        "default": "你是中文互联网表情包分类专家。\n\n请用中文简要描述这张表情包图片的内容，包含以下维度：\n\n1. **画面描述**：画面中有什么（人物/动物/文字/物体等）\n2. **表情/情绪**：角色的表情和情绪基调\n3. **文字内容**：如果有文字，文字是什么\n4. **适用场景**：这张表情包适合在什么社交场景下使用\n\n然后给出 3-5 个中文标签（用逗号分隔）。\n\n请严格按照以下 JSON 格式回复，不要有多余内容：\n{\"description\": \"描述文本\", \"tags\": [\"标签1\", \"标签2\", \"标签3\"]}"
+      },
+      "prompt_head": {
+        "description": "提示词头",
+        "type": "string",
+        "hint": "请输入提示词头",
+        "default": "\n\n你在对话中需根据当前情境智能选用表情符号，表情需用&&包裹，例如：&&happy&&, 通用格式:&&标签&&。选择逻辑遵循以下动态规则：\n\n[智能触发机制]\n1. 关键词匹配：当对话内容包含以下类型词汇时激活表情使用\n   - 核心情绪词（开心/生气/惊讶等）→ 直接匹配对应标签\n   - 场景特征词（早安/报酬/思考等）→ 关联场景标签\n   - 语气调节词（请/建议/但是等）→ 触发软化型表情\n2. 动态优先级：\n   a) 精确匹配现有标签 > 同义词扩展 > 放弃使用\n   b) 高频使用标签优先于低频标签\n\n[表情标签库]（当前可用）\n格式：标签 - 使用场景描述\n当前可用：\n"
+      },
+      "prompt_tail_1": {
+        "description": "提示词尾",
+        "type": "string",
+        "hint": "请输入提示词尾_1",
+        "default": "\n\n=== 安全控制体系 ===\n1. 使用频率：\n   • 日常对话：最多"
+      },
+      "prompt_tail_2": {
+        "description": "提示词尾",
+        "type": "string",
+        "hint": "请输入提示词尾_2",
+        "default": "个表情\n   • 专业咨询：≤1个\n2. 强制校验规则：\n   a) 存在性检查：仅使用当前列表存在的标签\n   b) 冲突检测：当涉及医疗/法律/暴力话题时禁用所有表情\n   c) 语义一致性：表情含义需与上下文情绪方向一致\n3. 智能降级策略：\n   1) 首选：同类别表情或相近表情\n   2) 备选：放弃使用表情\n4. 自检流程：\n   提取关键词 → 匹配标签 → 语境审查 → 最终输出"
+      }
+    }
+  },
+  "emotion_llm_enabled": {
+    "description": "启用情感模型判断表情",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后将调用指定对话模型判断表情标签"
+  },
+  "emotion_llm_provider_id": {
+    "description": "情感模型Provider ID",
+    "type": "string",
+    "default": "",
+    "hint": "留空则使用当前对话的模型",
+    "_special": "select_provider"
+  },
+  "meme_llm_tool_enabled": {
+    "description": "启用 LLM 表情包工具",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后，LLM 可通过 send_meme 工具主动发送表情包图片（不依赖文本中的 &&label&& 标记）"
+  },
+  "convert_static_to_gif": {
+    "description": "静态图转GIF发送",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后发送静态图表情时会转为1帧GIF格式",
+    "_advanced": true
+  },
+  "max_emotions_per_message": {
+    "description": "单次回复表情上限",
+    "type": "int",
+    "default": 2,
+    "hint": "每次回复最多插入的表情数量"
+  },
+  "emotions_probability": {
+    "description": "表情出现概率",
+    "type": "int",
+    "default": 50,
+    "hint": "每次发送表情出现的概率，范围为1-100",
+    "slider": {
+      "min": 1,
+      "max": 100,
+      "step": 10
+    }
+  },
+  "strict_max_emotions_per_message": {
+    "description": "严格限制表情数量",
+    "type": "bool",
+    "default": true,
+    "hint": "如果为true，则每次回复最多使用max_emotions_per_message个表情, 多余的数量会被严格裁剪去除"
+  },
+  "enable_loose_emotion_matching": {
+    "description": "启用宽松的表情匹配",
+    "type": "bool",
+    "default": true,
+    "hint": "如果为true，则会尝试匹配相似的表情标签, 如果你使用中文, 强烈建议开启, 如果使用英文, 在出现错误时建议关闭"
+  },
+  "enable_alternative_markup": {
+    "description": "启用备用标记",
+    "type": "bool",
+    "default": true,
+    "hint": "如果为true，则会尝试使用备用标记, 例如: &&happy&& 和 :happy: 是等价的, 防止llm自己编标记, 一般情况建议开启"
+  },
+  "remove_invalid_alternative_markup": {
+    "description": "移除无效备用标记",
+    "type": "bool",
+    "default": true,
+    "hint": "移除无法识别的()或[]标记内容；如括号被误删请关闭",
+    "_advanced": true
+  },
+  "enable_repeated_emotion_detection": {
+    "description": "启用重复表情检测",
+    "type": "bool",
+    "default": true,
+    "hint": "如果为true，则会尝试检测重复的表情, 防止重复使用表情(例如angryangryangry), 一般情况建议开启"
+  },
+  "high_confidence_emotions": {
+    "description": "高置信度表情标签",
+    "type": "list",
+    "default": [
+      "angry",
+      "happy",
+      "sad",
+      "surprised",
+      "confused",
+      "color",
+      "cpu",
+      "fool",
+      "givemoney",
+      "like",
+      "see",
+      "shy",
+      "work",
+      "reply",
+      "meow",
+      "baka",
+      "morning",
+      "sleep",
+      "sigh"
+    ]
+  },
+  "content_cleanup_rule": {
+    "description": "内容过滤正则",
+    "type": "string",
+    "default": "&&[a-zA-Z]*&&",
+    "hint": "移除分段后内容中的匹配文本，一般无需改动",
+    "_advanced": true
+  },
+  "enable_mixed_message": {
+    "description": "启用回复带图",
+    "type": "bool",
+    "default": true,
+    "hint": "文本和表情图片在同一条消息中发送（注意：分段回复可能导致功能失效）"
+  },
+  "mixed_message_probability": {
+    "description": "回复带图概率",
+    "type": "int",
+    "default": 50,
+    "hint": "启用回复带图时的发送概率，范围为1-100",
+    "slider": {
+      "min": 1,
+      "max": 100,
+      "step": 10
+    }
+  },
+  "streaming_compatibility": {
+    "description": "流式传输兼容",
+    "type": "bool",
+    "default": false,
+    "hint": "流式模式下表情图片作为独立消息发送",
+    "_advanced": true
+  },
+  "meme_identify_enabled": {
+    "description": "启用 LLM 自动识别表情包描述",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后，新上传/导入的表情包会调用 Vision 模型自动生成中文描述和使用场景"
+  },
+  "meme_identify_provider_id": {
+    "description": "表情包识别用的 LLM Provider ID",
+    "type": "string",
+    "default": "",
+    "hint": "留空则使用默认 Provider",
+    "_special": "select_provider"
+  },
+  "meme_identify_on_upload": {
+    "description": "上传表情时自动触发识别",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后，上传表情包不会自动识别，需在 WebUI 手动点击识别"
+  },
+  "meme_identify_concurrency": {
+    "description": "批量识别并发数",
+    "type": "int",
+    "default": 2,
+    "hint": "同时识别图片的数量，过高可能触发限流",
+    "_advanced": true
+  },
+  "meme_identify_circuit_threshold": {
+    "description": "识别熔断阈值",
+    "type": "int",
+    "default": 5,
+    "hint": "连续失败 N 次后暂停识别，0=禁用",
+    "_advanced": true
+  },
+  "meme_identify_circuit_cooldown": {
+    "description": "熔断冷却时间（秒）",
+    "type": "int",
+    "default": 300,
+    "hint": "熔断后等待多久再尝试恢复",
+    "_advanced": true
+  }
+}
