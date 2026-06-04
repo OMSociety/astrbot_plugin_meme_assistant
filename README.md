@@ -7,6 +7,8 @@
 为 LLM 提供智能表情包发送能力，支持 AI 识别发送、WebUI 管理、云端同步、逐表情 LLM 描述存储。让 Bot 在群聊中精准、自然地使用表情包。
 
 > 本项目由 AI 编写，v1.0.0 重构自 [astrbot_plugin_meme_manager](https://github.com/anka-afk/astrbot_plugin_meme_manager)。
+> 
+> 插件 Logo 来源于 Pixiv Pid: [137292022](https://www.pixiv.net/artworks/137292022)
 
 [快速开始](#-快速开始) • [功能列表](#-功能列表) • [配置项](#-配置项说明) • [LLM 工具](#-llm-可调用工具) • [更新日志](CHANGELOG.md)
 
